@@ -1,0 +1,3450 @@
+# encoding: utf-8
+
+##### GRASP.PY ####################################################################################
+
+__version__   =  '1.0'
+__license__   =  'BSD'
+__credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
+__email__     =  'info@textgain.com'
+__author__    =  'Textgain'
+__copyright__ =  'Textgain'
+
+###################################################################################################
+
+# Copyright (c) 2016, Textgain BVBA
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without modification, 
+# are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, 
+#    this list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice, 
+#    this list of conditions and the following disclaimer in the documentation and/or 
+#    other materials provided with the distribution.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR 
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND 
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR 
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, 
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY 
+# WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+###################################################################################################
+
+# WWW  Web Mining                   search engines, servers, HTML DOM + CSS selectors, plaintext
+# DB   Databases                    comma-separated values, dates, SQL
+# NLP  Natural Language Processing  tokenization, part-of-speech tagging, sentiment analysis
+# ML   Machine Learning             clustering, classification, confusion matrix, n-grams
+# NET  Network Analysis             shortest paths, centrality, components, communities
+# ETC                               recipes for functions, strings, lists, ...
+
+###################################################################################################
+
+import sys
+import os
+import re
+import inspect
+import traceback
+import threading
+import multiprocessing
+import multiprocessing.pool
+import itertools
+import collections
+import unicodedata
+import codecs
+import socket; socket.setdefaulttimeout(30)
+import wsgiref
+import wsgiref.simple_server
+import urllib
+import smtplib
+import hashlib
+import hmac
+import base64
+import binascii
+import email
+import xml.etree.ElementTree as ElementTree
+import sqlite3 as sqlite
+import csv as csvlib
+import json
+import time
+import datetime
+import random
+import math
+
+from heapq import heappush, heappop
+
+try:
+    # 3 decimal places (0.001)
+    json.encoder.FLOAT_REPR = lambda f: format(f, '.3f')
+except:
+    pass
+
+PY2 = sys.version.startswith('2')
+
+if not PY2:
+    str, unicode, basestring = bytes, str, str
+
+if not PY2:
+    # Python 3.4+
+    from html.parser import HTMLParser
+    from html        import unescape
+else:
+    # Python 2.7
+    from HTMLParser  import HTMLParser
+    unescape = HTMLParser().unescape
+
+if not PY2:
+    import http.server   as BaseHTTPServer
+    import socketserver  as SocketServer
+else:
+    import BaseHTTPServer
+    import SocketServer
+
+if not PY2:
+    import urllib.request
+    import urllib.parse as urlparse
+    URLError, Request, urlopen, urlencode, urldecode, urlquote = (
+        urllib.error.URLError,
+        urllib.request.Request,
+        urllib.request.urlopen,
+        urllib.parse.urlencode,
+        urllib.parse.unquote,
+        urllib.parse.quote
+    )
+else:
+    import urllib2
+    import urlparse
+    URLError, Request, urlopen, urlencode, urldecode, urlquote = (
+        urllib2.URLError,
+        urllib2.Request,
+        urllib2.urlopen,
+        urllib.urlencode,
+        urllib.unquote,
+        urllib.quote
+    )
+
+# In Python 2, Class.__str__ returns a byte string.
+# In Python 3, Class.__str__ returns a Unicode string.
+
+# @printable
+# class X(object):
+#     def __str__(self):
+#         return unicode(' ')
+
+# works on both Python 2 & 3.
+
+def printable(cls):
+    """ @printable class defines class.__unicode__ in Python 2.
+    """
+    if sys.version.startswith('2'):
+        if hasattr(cls, '__str__'):
+            cls.__unicode__ = cls.__str__
+            cls.__str__ = lambda self: self.__unicode__().encode('utf-8')
+    return cls
+
+REGEX = type(re.compile(''))
+
+# isinstance(re.compile(''), REGEX)
+
+##### ETC #########################################################################################
+
+#---- PARALLEL ------------------------------------------------------------------------------------
+# Parallel processing uses multiple CPU's to execute multiple processes simultaneously.
+
+def parallel(f, values=[], *args, **kwargs):
+    """ Returns an iterator of f(v, *args, **kwargs)
+        for values=[v1, v2, ...], using available CPU's.
+    """
+    p = multiprocessing.Pool(processes=None)
+    p = p.imap(_worker, ((f, v, args, kwargs) for v in values))
+    return p
+
+def _worker(x):
+    f, v, args, kwargs = x
+    return f(v, *args, **kwargs)
+
+# for v in parallel(pow, (1, 2, 3), 2):
+#     print(v)
+
+#---- ASYNC ---------------------------------------------------------------------------------------
+# Asynchronous functions are executed in a separate thread and notify a callback function 
+# (instead of blocking the main thread).
+
+def asynchronous(f, callback=lambda v, e: None, daemon=True):
+    """ Returns a new function that calls 
+        callback(value, exception=None) when done.
+    """
+    def thread(*args, **kwargs):
+        def worker(callback, f, *args, **kwargs):
+            try:
+                v = f(*args, **kwargs)
+            except Exception as e:
+                callback(None, e)
+            else:
+                callback(v, None)
+        t = threading.Thread
+        t = t(target=worker, args=(callback, f) + args, kwargs=kwargs)
+        t.daemon = daemon # False = program only ends if thread stops.
+        t.start()
+        return t
+    return thread
+
+# def ping(v, e=None):
+#     if e: 
+#         raise e
+#     print(v)
+# 
+# pow = asynchronous(pow, ping)
+# pow(2, 2)
+# pow(2, 3) #.join(1)
+# 
+# for i in range(10):
+#     time.sleep(0.1)
+#     print('...')
+
+# Atomic operations are thread-safe, e.g., dict.get() or list.append(),
+# but not all operations are atomic, e.g., dict[k] += 1 needs a lock.
+
+lock = threading.RLock()
+
+def atomic(f):
+    """ The @atomic decorator executes a function thread-safe.
+    """
+    def decorator(*args, **kwargs):
+        with lock:
+            return f(*args, **kwargs)
+    return decorator
+
+# hits = collections.defaultdict(int)
+# 
+# @atomic
+# def hit(k):
+#     hits[k] += 1
+
+MINUTE, HOUR, DAY = 60, 60*60, 60*60*24
+
+def scheduled(interval=MINUTE):
+    """ The @scheduled decorator executes a function periodically (async).
+    """
+    def decorator(f):
+        def timer():
+            while 1:
+                time.sleep(interval)
+                f()
+        t = threading.Thread(target=timer)
+        t.start()
+    return decorator
+
+# @scheduled(1)
+# @atomic
+# def update():
+#     print("updating...")
+
+def retry(exception, tries, f, *args, **kwargs):
+    """ Returns the value of f(*args, **kwargs).
+        Retries if the given exception is raised.
+    """
+    for i in range(tries + 1):
+        try:
+            return f(*args, **kwargs)
+        except exception as e:
+            if i < tries: 
+                time.sleep(2 ** i) # exponential backoff (1, 2, 4, ...)
+        except Exception as e:
+            raise e
+    raise e
+
+# def search(q,n):
+#     print('searching %s' % q)
+#     raise ValueError
+# 
+# retry(ValueError, 3, search, 'cats')
+
+# Asynchronous + retry:
+# f = asynchronous(lambda x: retry(Exception, 2, addx, x), callback)
+
+##### ETC #########################################################################################
+
+#---- UNICODE -------------------------------------------------------------------------------------
+# The u() function returns a Unicode string (Python 2 & 3).
+# The b() function returns a byte string, encoded as UTF-8.
+
+# We use u() as early as possible on all input (e.g. HTML).
+# We use b() on URLs.
+
+def u(v, encoding='utf-8'):
+    """ Returns the given value as a Unicode string.
+    """
+    if isinstance(v, str):
+        for e in ((encoding,), ('windows-1252',), ('utf-8', 'ignore')):
+            try: return v.decode(*e)
+            except:
+                pass
+        return v
+    if isinstance(v, unicode):
+        return v
+    return (u'%s' % v) # int, float
+
+def b(v, encoding='utf-8'):
+    """ Returns the given value as a byte string.
+    """
+    if isinstance(v, unicode):
+        for e in ((encoding,), ('windows-1252',), ('utf-8', 'ignore')):
+            try: return v.encode(*e)
+            except:
+                pass
+        return v
+    if isinstance(v, str):
+        return v
+    return (u'%s' % v).encode()
+
+##### ETC #########################################################################################
+
+#---- ITERATION -----------------------------------------------------------------------------------
+
+def shuffled(a):
+    """ Returns an iterator of values in the list, in random order.
+    """
+    for v in sorted(a, key=lambda v: random.random()):
+        yield v
+
+def nwise(a, n=2):
+    """ Returns an iterator of tuples of n consecutive values.
+    """
+    a = itertools.tee(a, n)
+    a =(itertools.islice(a, i, None) for i, a in enumerate(a))
+    a = zip(*a)
+    a = iter(a)
+    return a
+
+# for v in nwise([1, 2, 3], n=2): # (1, 2), (2, 3)
+#     print(v)
+
+def choice(a, p=[]):
+    """ Returns a random element from the given list,
+        with optional (non-negative) probabilities.
+    """
+    p = list(p)
+    n = sum(p)
+    x = random.uniform(0, n)
+    if n == 0:
+        return random.choice(a)
+    for v, w in zip(a, p):
+        x -= w
+        if x <= 0:
+            return v
+
+# f = {'a': 0, 'b': 0}
+# for i in range(100):
+#     v = choice(['a', 'b'], p=[0.9, 0.1])
+#     f[v] += 1
+# 
+# print(f)
+
+##### DB ##########################################################################################
+
+#---- CSV -----------------------------------------------------------------------------------------
+# A comma-separated values file (CSV) stores table data as plain text.
+# Each line in the file is a row in a table.
+# Each row consists of column fields, separated by a comma.
+
+class matrix(list):
+
+    def __getitem__(self, i):
+        """ A 2D list with advanced slicing: matrix[row1:row2, col1:col2].
+        """
+        if isinstance(i, tuple):
+            i, j = i
+            if isinstance(i, slice):
+                return [v[j] for v in list.__getitem__(self, i)]
+            return list.__getitem__(self, i)[j]
+        return list.__getitem__(self, i)
+
+# m = matrix()
+# m.append([1, 2, 3])
+# m.append([4, 5, 6])
+# m.append([7, 8, 9])
+# 
+# print(m)        # [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+# print(m[0])     # [1, 2, 3]
+# print(m[0,0])   #  1
+# print(m[:,0])   # [1, 4, 7]
+# print(m[:2,:2]) # [[1, 2], [4, 5]]
+
+class CSV(matrix):
+
+    def __init__(self, name='', separator=',', rows=[]):
+        """ Returns the given .csv file as a list of rows, each a list of values.
+        """
+        try:
+            self.name = name
+            self.separator = separator
+            self._load()
+        except IOError:
+            pass # doesn't exist (yet)
+        if rows:
+            self.extend(rows)
+
+    def _load(self):
+        f = open(self.name, 'r')
+        f = csvlib.reader(f, delimiter=self.separator)
+        for r in f:
+            r = [u(v) for v in r]
+            self.append(r)
+
+    def save(self, name=''):
+        a = []
+        for r in self:
+            r = ('"' + u(s).replace('"', '""') + '"' for s in r)
+            r = self.separator.join(r)
+            a.append(r)
+        f = codecs.open(name or self.name, 'w', encoding='utf-8')
+        f.write('\n'.join(a))
+        f.close()
+
+    def clear(self):
+        list.__init__(self, [])
+
+csv = CSV
+
+# data = csv('test.csv')
+# data.append([1, 'hello'])
+# data.save()
+# 
+# print(data[0,0]) # 1st cell
+# print(data[:,0]) # 1st column
+
+def col(i, a):
+    """ Returns the i-th column in the given list of lists.
+    """
+    for r in a:
+        yield r[i]
+
+def cd(*args):
+    """ Returns the directory of the script that calls cd() + given relative path.
+    """
+    f = inspect.currentframe()
+    f = inspect.getouterframes(f)[1][1] 
+    f = f != '<stdin>' and f or os.getcwd()
+    p = os.path.realpath(f)
+    p = os.path.dirname(p)
+    p = os.path.join(p, *args)
+    return p
+
+# print(cd('test.csv'))
+
+#---- SQL -----------------------------------------------------------------------------------------
+# A database is a collection of tables, with rows and columns of structured data.
+# Rows can be edited or selected with SQL statements (Structured Query Language).
+# Rows can be indexed for faster retrieval or related to other tables.
+
+# SQLite is a lightweight engine for a portable database stored as a single file.
+
+# https://www.sqlite.org/datatype3.html
+AFFINITY = collections.defaultdict(
+    lambda : 'text'    , {
+       str : 'text'    ,
+   unicode : 'text'    ,
+     bytes : 'blob'    ,
+      bool : 'integer' ,
+       int : 'integer' ,
+     float : 'real'
+})
+
+def schema(table, *fields, **type):
+    """ Returns an SQL CREATE TABLE statement, 
+        with indices on fields ending with '*'.
+    """
+    s = 'create table if not exists `%s` (' % table + 'id integer primary key);'
+    i = 'create index if not exists `%s_%s` on `%s` (`%s`);'
+    for k in fields:
+        k = re.sub(r'\*$', '', k)  # 'name*' => 'name'
+        v = AFFINITY[type.get(k)]  #     str => 'text'
+        s = s[:-2] + ', `%s` %s);' % (k, v)
+    for k in fields:
+        if k.endswith('*'):
+            s += i % ((table, k[:-1]) * 2)
+    return s
+
+# print(schema('persons', 'name*', 'age', age=int))
+
+class DatabaseError(Exception):
+    pass
+
+class Database(object):
+
+    def __init__(self, name, schema=None, timeout=10, factory=sqlite.Row):
+        """ SQLite database interface.
+        """
+        self.connection = sqlite.connect(name, timeout)
+        self.connection.row_factory = factory
+        if schema:
+            for q in schema.split(";"):
+                self(q, commit=False)
+            self.commit()
+
+    def __call__(self, sql, values=(), first=False, commit=True):
+        """ Executes the given SQL statement.
+        """
+        try:
+            r = self.connection.cursor().execute(sql, values)
+            if commit:
+                self.connection.commit()
+            if first:
+                return r.fetchone() if r else r  # single row
+            else:
+                return r
+        except Exception as e:
+            raise DatabaseError(str(e))
+
+    def execute(self, *args, **kwargs):
+        return self(*args, **kwargs)
+
+    def commit(self):
+        return self.connection.commit()
+
+    def rollback(self):
+        return self.connection.rollback()
+
+    @property
+    def id(self):
+        return self('select last_insert_rowid()').fetchone()[0]
+
+    def find(self, table, *fields, **filters):
+        return self(*SELECT(table, *fields, **filters))
+
+    def first(self, table, *fields, **filters):
+        return self(*SELECT(table, *fields, **filters), first=True)
+
+    def append(self, table, **fields):
+        return self(*INSERT(table, **fields), 
+                        commit=fields.pop('commit', True))
+
+    def update(self, table, id, **fields):
+        return self(*UPDATE(table, id, **fields), 
+                        commit=fields.pop('commit', True))
+
+    def remove(self, table, id):
+        return self(*DELETE(table, id), 
+                        commit=fields.pop('commit', True))
+
+    def __del__(self):
+        try: 
+            self.connection.commit()
+            self.connection.close()
+            self.connection = None
+        except:
+            pass
+
+# db = Database(cd('test.db'), schema('persons', 'name*', 'age', age=int))
+# db.append('persons', name='Tom', age=30)
+# db.append('persons', name='Guy', age=30)
+# 
+# for id, name, age in db.find('persons', age='>20'):
+#     print(name, age)
+
+def concat(a, format='%s', separator=', '):
+  # concat([1, 2, 3]) => '1, 2, 3'
+    return separator.join(format % v for v in a)
+
+def SELECT(table, *fields, **where):
+    """ Returns an SQL SELECT statement + parameters.
+    """
+
+    def op(v):
+        if isinstance(v, basestring) and re.search(r'^<|>', v): # '<10'
+            return v[0], v[1:]
+        if isinstance(v, basestring) and re.search(r'\*'  , v): # '*ly'
+            return 'like', v.replace('*', '%')
+        if hasattr(v, '__iter__'):
+            return 'in', v
+        else:
+            return '=', v
+
+    s = 'select %s from %s where %s ' + 'limit %i, %i order by `%s`;' % (
+         where.pop('slice', (0, -1)) + (
+         where.pop('sort', 'id'),)
+    )
+    f = concat(fields or '*')
+    k = where.keys()    # ['name', 'age']
+    v = where.values()  # ['Tom*', '>10']
+    v = map(op, v)      # [('like', 'Tom%'), ('>', '10')]
+    v = zip(*v)         #  ('like', '>'), ('Tom%', '10')
+    v = iter(v)
+    q = next(v, ())
+    v = next(v, ())
+    s = s % (f, table, concat(zip(k, q), '`%s` %s ?', 'and'))
+    s = s.replace('limit 0, -1 ', '', 1)
+    s = s.replace('where  ', '', 1)
+    return s, tuple(v)
+
+# print(SELECT('persons', '*', age='>10', slice=(0, 10)))
+
+def INSERT(table, **fields):
+    """ Returns an SQL INSERT statement + parameters.
+    """
+    s = 'insert into `%s` (%s) values (%s);'
+    k = fields.keys()
+    v = fields.values()
+    s = s % (table, concat(k, '`%s`'), concat('?' * len(v)))
+    return s, tuple(v)
+
+# print(INSERT('persons', name='Smith', age=10))
+
+def UPDATE(table, id, **fields):
+    """ Returns an SQL UPDATE statement + parameters.
+    """
+    s = 'update `%s` set %s where id=?;'
+    k = fields.keys()
+    v = fields.values()
+    s = s % (table, concat(k, '`%s`=?'))
+    s = s.replace(' set  ', '', 1)
+    return s, tuple(v) + (id,)
+
+# print(UPDATE('persons', 1, name='Smith', age=20))
+
+def DELETE(table, id):
+    """ Returns an SQL DELETE statement + parameters.
+    """
+    s = 'delete from `%s` where id=?;' % table
+    return s, (id,)
+
+# print(DELETE('persons' 1))
+
+#---- ENCRYPTION ----------------------------------------------------------------------------------
+# The pw() function is secure enough for storing passwords; encrypt() and decrypt() are not secure.
+
+def key(n=32):
+    """ Returns a new key of length n.
+    """
+    k = os.urandom(256)
+    k = binascii.hexlify(k)[:n]
+    return u(k)
+
+def stretch(k, n):
+    """ Returns a new key of length n.
+    """
+    while len(k) < n:
+        k += hashlib.md5(b(k)[-1024:]).hexdigest()
+    return u(k[:n])
+
+def encrypt(s, k=''):
+    """ Returns the encrypted string.
+    """
+    k = stretch(k, len(s))
+    k = bytearray(b(k))
+    s = bytearray(b(s))
+    s = bytearray(((i + j) % 256) for i, j in zip(s, itertools.cycle(k))) # Vigenère cipher
+    s = binascii.hexlify(s)
+    return u(s)
+
+def decrypt(s, k=''):
+    """ Returns the decrypted string.
+    """
+    k = stretch(k, len(s))
+    k = bytearray(b(k))
+    s = bytearray(binascii.unhexlify(s))
+    s = bytearray(((i - j) % 256) for i, j in zip(s, itertools.cycle(k)))
+    s = bytes(s)
+    return u(s)
+
+# print(decrypt(encrypt('hello world', '1234'), '1234'))
+
+def pw(s, f='sha256', n=100000):
+    """ Returns the encrypted string, using PBKDF2.
+    """
+    k = base64.b64encode(os.urandom(32))
+    s = hashlib.pbkdf2_hmac(f, b(s)[:1024], k, n)
+    s = binascii.hexlify(s)
+    s = 'pbkdf2:%s:%s:%s:%s' % (f, n, u(k), u(s))
+    return s
+
+def pw_ok(s1, s2):
+    """ Returns True if pw(s1) == s2.
+    """
+    _, f, n, k, s = s2.split(':')
+    s1 = hashlib.pbkdf2_hmac(f, b(s1)[:1024], b(k), int(n))
+    s1 = binascii.hexlify(s1)
+    eq = True
+    for ch1, ch2 in zip(s1, b(s)):
+        eq = ch1 == ch2 # contstant-time comparison
+    return eq
+
+# print(pw_ok('1234', pw('1234')))
+
+##### ML ##########################################################################################
+
+#---- MODEL --------------------------------------------------------------------------------------
+# The Model base class is inherited by Perceptron, KNN, ...
+
+class Model(object):
+
+    def __init__(self, examples=[]):
+        self.labels = {}
+
+    def train(self, v, label=None):
+        pass
+
+    def predict(self, v):
+        pass
+
+    def save(self, path):
+        raise NotImplementedError
+
+    @classmethod
+    def load(cls, path):
+        raise NotImplementedError
+
+#---- PERCEPTRON ----------------------------------------------------------------------------------
+# The Perceptron or single-layer neural network is a supervised machine learning algorithm.
+# Supervised machine learning uses labeled training examples to infer statistical patterns.
+# Each example is a set of features – e.g., set(('lottery',)) – and a label (e.g., 'spam').
+
+# The Perceptron takes a list of examples and learns what features are associated with what labels.
+# The resulting 'model' can then be used to predict the label of new examples.
+
+def avg(a):
+    a = list(a)
+    n = len(a) or 1
+    s = sum(a)
+    return float(s) / n
+
+def sd(a):
+    a = list(a)
+    n = len(a) or 1
+    m = avg(a)
+    return math.sqrt(sum((v - m) ** 2 for v in a) / n)
+
+def iavg(x, m=0.0, sd=0.0, t=0):
+    """ Returns the iterative (mean, standard deviation, number of samples).
+    """
+    t += 1
+    v  = sd ** 2 + m ** 2 # variance
+    v += (x ** 2 - v) / t
+    m += (x ** 1 - m) / t
+    sd = math.sqrt(v - m ** 2)
+    return (m, sd, t)
+
+# p = iavg(1)     # (1.0, 0.0, 1)
+# p = iavg(2, *p) # (1.5, 0.5, 2)
+# p = iavg(3, *p) # (2.0, 0.8, 3)
+# p = iavg(4, *p) # (2.5, 1.1, 4)
+# 
+# print(p)
+# print(sum([1,2,3,4]) / 4.)
+
+def softmax(p, a=1.0):
+    """ Returns a dict with float values that sum to 1.0
+        (using generalized logistic regression).
+    """
+    if p:
+        a = a or 1
+        v = p.values()
+        v = [x / a for x in v]
+        m = max(v)
+        e = [math.exp(x - m) for x in v] # prevent overflow
+        s = sum(e)
+        v = [x / s for x in e]
+        p = dict(zip(p.keys(), v))
+    return p
+
+# print(softmax({'cat': +1, 'dog': -1})) # {'cat': 0.88, 'dog': 0.12}
+# print(softmax({'cat': +2, 'dog': -2})) # {'cat': 0.98, 'dog': 0.02}
+
+def top(p):
+    """ Returns a (key, value)-tuple with the max value in the dict.
+    """
+    if p:
+        v = max(p.values())
+    else:
+        v = 0.0
+    k = [k for k in p if p[k] == v]
+    k = random.choice(k)
+    return k, v
+
+# print(top({'cat': 1, 'dog': 2})) # ('dog', 2)
+
+class Perceptron(Model):
+
+    def __init__(self, examples=[], n=10):
+        """ Single-layer averaged perceptron learning algorithm.
+        """
+        # {label: count}
+        # {label: {feature: (weight, weight sum, timestamp)}}
+        self.labels = \
+            collections.defaultdict(int)
+        self.weights, self._t, self._p = (
+            collections.defaultdict(lambda: 
+            collections.defaultdict(lambda: [0, 0, 0])), 1, iavg(0)
+        )
+        for i in range(n):
+            for v, label in shuffled(examples):
+                self.train(v, label)
+
+    def train(self, v, label=None):
+
+        def cumsum(label, f, i, t):
+            # Accumulate average weights (prevents overfitting).
+            # Keep running sum + time when sum was last updated.
+            # http://www.ciml.info/dl/v0_8/ciml-v0_8-ch03.pdf
+            w = self.weights[label][f]
+            w[0] += i
+            w[1] += w[0] * (t - w[2])
+            w[2]  = t
+
+        self.labels[label] += 1
+
+        guess, p = top(self.predict(v, normalize=False))
+        if guess != label:
+            for f in v:
+                # Error correction:
+                cumsum(label, f, +1, self._t)
+                cumsum(guess, f, -1, self._t)
+            self._t += 1
+
+        self._p = iavg(abs(p), *self._p) # (mean, sd, t)
+
+    def predict(self, v, normalize=True):
+        """ Returns a dict of (label, probability)-items.
+        """
+        p = dict.fromkeys(self.labels, 0)
+        t = float(self._t)
+        for label, features in self.weights.items():
+            n = 0
+            for f in v:
+                if f in features:
+                    w = features[f]
+                    n = n + (w[1] + w[0] * (t - w[2])) / t
+            p[label] = n
+
+        if normalize:
+            # 1. Divide values by avg + sd (-1 => +1)
+            # 2. Softmax to values between 0.1 => 0.9
+            #    (with < 0.1 and > 0.9 for outliers)
+            p = softmax(p, a=(self._p[0] + self._p[1]))
+        return p
+
+    def save(self, path):
+        f = open(path, 'w')
+        json.dump({
+            'labels'  : self.labels,
+            'weights' : self.weights, 
+                  't' : self._t, 
+                  'p' : self._p}, f)
+
+    @classmethod
+    def load(cls, path):
+        f = open(path, 'r')
+        r = json.load(f)
+        m = cls()
+        m.labels.update(r['labels'])
+        m.weights.update(r['weights'])
+        m._t = r['t']
+        m._p = r['p']
+        return m
+
+# p = Perceptron(examples=[
+#     (('woof', 'bark'), 'dog'),
+#     (('meow', 'purr'), 'cat')], n=10)
+# 
+# print(p.predict(('meow',)))
+# 
+# p.save(cd('model.json'))
+# p = Perceptron.load(cd('model.json'))
+
+#---- FEATURES ------------------------------------------------------------------------------------
+# Character 3-grams are sequences of 3 successive characters: 'hello' => 'hel', 'ell', 'llo'.
+# Character 3-grams are useful as training examples for text classifiers,
+# capturing 'small words' such as pronouns, smileys, word suffixes (-ing)
+# and language-specific letter combinations (oeu, sch, tch, ...)
+
+def chngrams(s, n=3):
+    """ Returns an iterator of character n-grams.
+    """
+    for i in range(len(s) - n + 1):
+        yield s[i:i+n] # 'hello' => 'hel', 'ell', 'llo'
+
+def ngrams(s, n=3):
+    """ Returns an iterator of word n-grams.
+    """
+    return chngrams(re.split(r'\s+', s), n)
+
+def v(s): # (vector)
+    """ Returns a set of character trigrams in the given string,
+        removing hashtags (#), anonymizing links and usernames.
+        Can be used as Perceptron.train(v(s)) or predict(v(s)).
+    """
+    s = s.lower()
+    s = s.replace('#', '')
+    s = re.sub(r'(https?://[^\s]+)', 'http://', s)
+    s = re.sub(r'(@[a-z0-9_./]+)', '@username', s)
+    v = {}
+    v.update(chngrams(s, n=3))
+   #v.update(chngrams(s, n=5))
+    return v
+
+# data = []
+# for id, username, tweet, date in csv(cd('hate.csv')):
+#     data.append((v(tweet), 'hate'))
+# for id, username, tweet, date in csv(cd('safe.csv')):
+#     data.append((v(tweet), 'safe'))
+# 
+# p = Perceptron(examples=data, n=10)
+# p.save(cd('hate-model.json'))
+# 
+# print(p.predict(v('die in your rage kuffar!'))) # {'safe': 0.15, 'hate': 0.85}
+
+#---- FEATURE SELECTION ---------------------------------------------------------------------------
+# Feature selection selects the best features by evaluating their statistical significance.
+
+def pp(data=[]): # (posterior probability)
+    """ Returns a {feature: {label: frequency}} dict
+        for the given set of (vector, label)-tuples.
+    """
+    f1 = collections.defaultdict(float) # {label: count}
+    f2 = collections.defaultdict(float) # {feature: count}
+    f3 = collections.defaultdict(float) # {feature, label: count}
+    p  = {}
+    for v, label in data:
+        f1[label] += 1
+    for v, label in data:
+        for f in v:
+            f2[f] += 1
+            f3[f, label] += 1 / f1[label]
+    for label in f1:
+        for f in f2:
+            p.setdefault(f, {})[label] = f1[label] / f2[f] * f3[f, label]
+    return p
+
+def fsel(data=[]): # (feature selection, using chi2)
+    """ Returns a {feature: p-value} dict 
+        for the given set of (vector, label)-tuples.
+    """
+    from scipy.stats import chi2_contingency as chi2
+
+    f1 = collections.defaultdict(float) # {label: count}
+    f2 = collections.defaultdict(float) # {feature: count}
+    f3 = collections.defaultdict(float) # {feature, label: count}
+    p  = {}
+    for v, label in data:
+        f1[label] += 1
+    for v, label in data:
+        for f in v:
+            f2[f] += 1
+            f3[f, label] += 1 / f1[label]
+    for f in f2:
+        p[f] = chi2([[f1[label] - f3[f, label] or 1e-10 for label in f1],
+                     [            f3[f, label] or 1e-10 for label in f1]])[1]
+    return p
+
+# data = [
+#     (set(('yawn', 'meow')), 'cat'),
+#     (set(('yawn',       )), 'dog')]
+# 
+# bias = pp(data)
+# for f, p in fsel(data).items():
+#     if p > 0.995:
+#         print(f)
+#         print(top(bias[f]))
+#         # 'meow' is significant (always predicts 'cat')
+#         # 'yawn' is independent (50/50 'dog' and 'cat')
+
+#---- ACCURACY ------------------------------------------------------------------------------------
+# Predicted labels will often include false positives and false negatives.
+# A false positive is a real e-mail that is labeled as spam (for example).
+# A false negative is a real e-mail that ends up in the junk folder.
+
+# To evaluate how well a model deals with false positives and negatives (i.e., accuracy),
+# we can use a list of labeled test examples and check the label vs. the predicted label.
+# The evaluation will yield two scores between 0.0 and 1.0: precision (P) and recall (R).
+# Higher precision = less false positives.
+# Higher recall    = less false negatives.
+
+# A robust evaluation of P/R is by K-fold cross-validation.
+# K-fold cross-validation takes a list of labeled examples,
+# and trains + tests K different models on different subsets of examples.
+
+def confusion_matrix(model, test=[]):
+    """ Returns the matrix of labels x predicted labels, as a dict.
+    """
+    # { label: { predicted label: count}}
+    m = collections.defaultdict(lambda: \
+        collections.defaultdict(int))
+    for v, label in test:
+        guess, p = top(model.predict(v))
+        m[label][guess] += 1
+    return m
+
+def test(model, target, data=[]):
+    """ Returns a (precision, recall)-tuple for the test data.
+        High precision = few false positives for target label.
+        High recall    = few false negatives for target label.
+    """
+    m  = confusion_matrix(model, data)
+    TP = 0.0
+    TN = 0.0
+    FP = 0.0
+    FN = 0.0
+    for x1 in model.labels:
+        for x2, n in m[x1].items():
+            if target == x1 == x2:
+                TP += n
+            if target != x1 == x2:
+                TN += n
+            if target == x1 != x2:
+                FN += n
+            if target == x2 != x1: 
+                FP += n
+    return (
+        TP / (TP + FP or 1),
+        TP / (TP + FN or 1))
+
+def kfoldcv(Model, data=[], k=10, weighted=False, verbose=False, **kwargs):
+    """ Returns the average precision & recall across labels, in k tests.
+    """
+
+    def chunks(a, n=10):
+      # chunks([1,2,3,4], n=2) => [[1,2], [3,4]]
+        return [a[i::n] for i in range(n)]
+
+    def avg(a):
+      # avg([(1, 0.33), (2, 0.33), (3, 0.33)]) => 2   (weighted mean)
+        return sum(v * w for v, w in a) / (sum(w for v, w in a) or 1)
+
+    data = list(shuffled(data))
+    data = chunks(data, k)
+
+    P = []
+    R = []
+    for i in range(k):
+        a = data[i]
+        b = data[:i] + data[i+1:]
+        b = itertools.chain(*b)
+        m = Model(examples=b, **kwargs)
+        for label, n in m.labels.items():
+            if not weighted:
+                n = 1
+            precision, recall = test(m, target=label, data=a)
+            P.append((precision, n))
+            R.append((recall, n))
+
+            if verbose:
+                # k 1 P 0.99 R 0.99 spam
+                print('k %i' % (i+1), 'P %.2f' % precision, 'R %.2f' % recall, label)
+
+    return avg(P), avg(R)
+
+# data = []
+# for id, username, tweet, date in csv(cd('hate.csv')):
+#     data.append((v(tweet), 'hate'))
+# for id, username, tweet, date in csv(cd('safe.csv')):
+#     data.append((v(tweet), 'safe'))
+# 
+# print(kfoldcv(Perceptron, data, k=3, n=5, verbose=True)) # ~ P 0.80 R 0.80
+
+#---- CONFIDENCE ----------------------------------------------------------------------------------
+# Predicted labels usually come with a probability or confidence score.
+# However, the raw scores of Perceptron + softmax, SVM and Naive Bayes 
+# do not always yield good estimates of true probabilities.
+
+# We can use a number of training examples for calibration.
+# Isotonic regression yields a function that can be used to
+# map the raw scores to well-calibrated probabilities.
+
+def pav(y=[]):
+    """ Returns the isotonic regression of y
+        (Pool Adjacent Violators algorithm).
+    """
+    y = list(y)
+    n = len(y) - 1
+    while 1:
+        e = 0
+        i = 0
+        while i < n:
+            j = i
+            while j < n and y[j] >= y[j+1]:
+                j += 1
+            if y[i] != y[j]:
+                r = y[i:j+1]
+                y[i:j+1] = [float(sum(r)) / len(r)] * len(r)
+                e = 1
+            i = j + 1
+        if not e: # converged?
+            break
+    return y
+
+# Example from Fawcett & Niculescu (2007), PAV and the ROC convex hull:
+# 
+# y = sorted((
+#     (0.90, 1),
+#     (0.80, 1),
+#     (0.70, 0),
+#     (0.60, 1),
+#     (0.55, 1),
+#     (0.50, 1),
+#     (0.45, 0),
+#     (0.40, 1),
+#     (0.35, 1),
+#     (0.30, 0),
+#     (0.27, 1),
+#     (0.20, 0),
+#     (0.18, 0),
+#     (0.10, 1),
+#     (0.02, 0)
+# ))
+# y = zip(*y)
+# y = list(y)[1]
+# print(pav(y))
+
+class calibrate(Model):
+
+    def __init__(self, model, label, data=[]):
+        """ Returns a new Model calibrated on the given data,
+            which is a set of (vector, label)-tuples.
+        """
+        self._model = model
+        self._label = label
+        # isotonic regression
+        y = ((model.predict(v)[label], label == x) for v, x in data)
+        y = sorted(y) # monotonic
+        y = zip(*y)
+        y = list(y or ((),()))
+        x = list(y[0])
+        y = list(y[1])
+        y = pav(y)
+        x = [0] + x + [1]
+        y = [0] + y + [1]
+        f = {}
+        i = 0
+        # linear interpolation
+        for p in range(100 + 1):
+            p *= 0.01
+            while x[i] < p:
+                i += 1
+            f[p] = (y[i-1] * (x[i] - p) + y[i] * (p - x[i-1])) / (x[i] - x[i-1])
+        self._f = f
+
+    def predict(self, v):
+        """ Returns the label's calibrated probability (0.0-1.0).
+        """
+        p = self._model.predict(v)[self._label]
+        p = self._f[round(p, 2)]
+        return p
+
+# data = []
+# for review, polarity in csv('reviews-assorted1000.csv'):
+#     data.append((v(review), polarity))
+# 
+# m = Model.load('sentiment.json')
+# m = calibrate(m, '+', data)
+
+#---- VECTOR --------------------------------------------------------------------------------------
+# A vector is a {feature: weight} dict, with n features, or n dimensions.
+
+# If {'x1':1, 'y1':2} and {'x2':3, 'y2':4} are two points in 2D,
+# then their distance is: sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2).
+# The distance can be calculated for points in 3D, 4D, or in nD.
+
+# Another measure of similarity is the angle between two vectors (cosine).
+# This works well for text features.
+
+def distance(v1, v2):
+    """ Returns the distance of the given vectors.
+    """
+    return sum(pow(v1.get(f, 0.0) - v2.get(f, 0.0), 2) for f in features((v1, v2))) ** 0.5
+
+def dot(v1, v2):
+    """ Returns the dot product of the given vectors.
+        Each vector is a dict of (feature, weight)-items.
+    """
+    return sum(v1.get(f, 0.0) * w for f, w in v2.items())
+
+def norm(v):
+    """ Returns the norm of the given vector.
+    """
+    return sum(w ** 2 for f, w in v.items()) ** 0.5
+
+def cos(v1, v2):
+    """ Returns the angle of the given vectors (0.0-1.0).
+    """
+    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1) # cosine distance
+
+def knn(v, vectors=[], k=3, distance=cos):
+    """ Returns the k nearest neighbors from the given list of vectors.
+    """
+    nn = sorted((1 - distance(v, x), x) for x in vectors)
+    nn = reversed(nn)
+    nn = list(nn)[:k]
+    return nn
+
+def sparse(v):
+    """ Returns a vector with non-zero weight features.
+    """
+    return v.__class__({f: w for f, w in v.items() if w != 0})
+
+def tf(v):
+    """ Returns a vector with normalized weights
+        (term frequency, sum to 1.0).
+    """
+    n = sum(v.values())
+    n = float(n or 1)
+    return v.__class__({f: w / n for f, w in v.items()})
+
+def tfidf(vectors=[]):
+    """ Returns an iterator of vectors with normalized weights
+        (term frequency–inverse document frequency).
+    """
+    df = collections.Counter() # stopwords have higher df (the, or, I, ...)
+    if not isinstance(vectors, list):
+        vectors = list(vectors)
+    for v in vectors:
+        df.update(v)
+    for v in vectors:
+        yield v.__class__({f: w / float(df[f] or 1) for f, w in v.items()})
+
+def features(vectors=[]):
+    """ Returns the set of features for all vectors.
+    """
+    return set(itertools.chain(*(vectors)))
+
+def centroid(vectors=[]):
+    """ Returns the mean vector for all vectors.
+    """
+    v = list(vectors)
+    n = float(len(v))
+    return {f: sum(v.get(f, 0) for v in v) / n for f in features(v)}
+
+def majority(a, default=None):
+    """ Returns the most frequent item in the given list (majority vote).
+    """
+    f = collections.Counter(a)
+    try:
+        m = max(f.values())
+        return random.choice([k for k, v in f.items() if v == m])
+    except:
+        return default
+
+# print(majority(['cat', 'cat', 'dog']))
+
+# examples = [
+#     ("'I know some good games we could play,' said the cat.", 'seuss'),
+#     ("'I know some new tricks,' said the cat in the hat."   , 'seuss'),
+#     ("They roared their terrible roars"                     , 'sendak'),
+#     ("They gnashed their terrible teeth"                    , 'sendak'),
+#     
+# ]
+# 
+# v, labels = zip(*examples) # = unzip
+# v = list(wc(tokenize(v)) for v in v)
+# v = list(tfidf(v))
+# 
+# labels = {id(v): label for v, label in zip(v, labels)} # { vector id: label }
+# 
+# x = wc(tokenize('They rolled their terrible eyes'))
+# x = wc(tokenize("'Look at me! Look at me now!' said the cat."))
+# 
+# for w, nn in knn(x, v, k=3):
+#     w = round(w, 2)
+#     print(w, labels[id(nn)])
+# 
+# print(majority(labels[id(nn)] for w, nn in knn(x, v, k=3)))
+
+#---- VECTOR CLUSTERING ---------------------------------------------------------------------------
+# The k-means clustering algorithm is an unsupervised machine learning method
+# that partitions a given set of vectors into k clusters, so that each vector
+# belongs to the cluster with the nearest center (mean).
+
+euclidean = distance
+spherical = cos
+
+def ss(vectors=[], distance=euclidean):
+    """ Returns the sum of squared distances to the center (variance).
+    """
+    v = list(vectors)
+    c = centroid(v)
+    return sum(distance(v, c) ** 2 for v in v)
+
+def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
+    """ Returns a list of k lists of vectors, clustered by distance.
+    """
+    vectors = list(vectors)
+    optimum = None
+
+    for _ in range(max(n, 1)):
+
+        # Random initialization:
+        g = list(shuffled(vectors))
+        g = list(g[i::k] for i in range(k))[:len(g)]
+
+        # Lloyd's algorithm:
+        for _ in range(iterations):
+            m = [centroid(v) for v in g]
+            e = []
+            for m1, g1 in zip(m, g):
+                for v in g1:
+                    d1 = distance(v, m1)
+                    d2, g2 = min((distance(v, m2), g2) for m2, g2 in zip(m, g))
+                    if d2 < d1:
+                        e.append((g1, g2, v)) # move to nearer centroid
+            for g1, g2, v in e:
+                g1.remove(v)
+                g2.append(v)
+            if not e: # converged?
+                break
+
+        # Optimal solution = lowest within-cluster sum of squares:
+        optimum = min(optimum or g, g, key=lambda g: sum(ss(g, distance) for g in g))
+    return optimum
+
+# data = [
+#     {'woof': 1},
+#     {'woof': 1},
+#     {'meow': 1}
+# ]
+# 
+# for cluster in kmeans(data, k=2):
+#     print(cluster) # cats vs dogs
+
+##### NLP #########################################################################################
+
+#---- TEXT ----------------------------------------------------------------------------------------
+
+def readability(s):
+    """ Returns the readability of the given string (0.0-1.0).
+    """
+    # Flesch Reading Ease; Farr, Jenkins & Patterson's formula.
+
+    def syllables(w, v="aeiouy"):
+      # syllables('several') => 2, se-ve-ral
+        if w.endswith('e'):
+            w = w[:-1]
+        return sum(not ch1 in v and \
+                       ch2 in v for ch1, ch2 in zip(w, w[1:])) or 1
+
+    s = s.lower()
+    s = s.strip()
+    s = s.strip('.!?()\'"')
+    s = re.sub(r'[\s,]+', ' ', s)
+    s = re.sub(r'[.!?]+', '.', s)
+    s = re.sub(r'(\. )+', '. ',s)
+    y = map(syllables, s.split()) # syllables
+    w = max(1, len(s.split(' '))) # words
+    s = max(1, len(s.split('.'))) # sentences
+    r = 1.599 * sum(n == 1 for n in y) * 100 / w - 1.015 * w / s - 31.517
+    r = 0.01 * r
+    r = max(r, 0.0)
+    r = min(r, 1.0)
+    return r
+
+def destress(s, replace={}):
+    """ Returns the string with no diacritics.
+    """
+    for k, v in replace.items():
+        s = s.replace(k, v)
+    for k, v in {
+     u'ø' : 'o' ,
+     u'ß' : 'ss',
+     u'œ' : 'ae',
+     u'æ' : 'oe',
+     u'“' : '"' ,
+     u'”' : '"' ,
+     u'‘' : "'" ,
+     u'’' : "'" ,
+     u'⁄' : '/' ,
+     u'¿' : '?' ,
+     u'¡' : '!'}.items():
+        s = s.replace(k, v)
+    f = unicodedata.combining             # f('´') == 0
+    s = unicodedata.normalize('NFKD', s)  # é => e + ´
+    s = ''.join(ch for ch in s if not f(ch))
+    return s
+
+# print(destress(u'pâté')) # 'pate'
+
+def deflood(s, n=3):
+    """ Returns the string with no more than n repeated characters.
+    """
+    if n == 0:
+        return s
+    return re.sub(r'((.)\2{%s,})' % (n-1), lambda m: m.group(1)[0] * n, s)
+    
+# print(deflood('Woooooow!!!!!!', n=3)) # 'Wooow!!!'
+
+def decamel(s, separator="_"):
+    """ Returns the string with CamelCase converted to underscores.
+    """
+    s = re.sub(r'([a-z0-9])([A-Z])', '\\1%s\\2' % separator, s)
+    s = re.sub(r'(.)([A-Z][a-z]+)', '\\1%s\\2' % separator, s)
+    s = re.sub(r'-', '_', s)
+    s = s.lower()
+    return s
+
+# print(decamel('HTTP404Response-Error')) # http404_response_error
+
+def sg(w, language='en', known={'aunties': 'auntie'}):
+    """ Returns the singular of the given plural noun.
+    """
+    if w in known: 
+        return known[w]
+    if language == 'en':
+        for pl, sg in (                                       # ± 98% accurate (CELEX)
+          (r'          ^(son|brother|father)s-', '\\1-'   ),
+          (r'      ^(daughter|sister|mother)s-', '\\1-'   ),
+          (r'                          people$', 'person' ),
+          (r'                             men$', 'man'    ),
+          (r'                        children$', 'child'  ),
+          (r'                           geese$', 'goose'  ),
+          (r'                            feet$', 'foot'   ),
+          (r'                           teeth$', 'tooth'  ),
+          (r'                            oxen$', 'ox'     ),
+          (r'                        (l|m)ice$', '\\1ouse'),
+          (r'                        (au|eu)x$', '\\1'    ),
+          (r'                 (ap|cod|rt)ices$', '\\1ex'  ),  # -ices
+          (r'                        (tr)ices$', '\\1ix'  ),
+          (r'                     (l|n|v)ises$', '\\1is'  ),
+          (r'(cri|(i|gn|ch|ph)o|oa|the|ly)ses$', '\\1sis' ),
+          (r'                            mata$', 'ma'     ),  # -a/ae
+          (r'                              na$', 'non'    ),
+          (r'                               a$', 'um'     ),
+          (r'                               i$', 'us'     ),
+          (r'                              ae$', 'a'      ), 
+          (r'           (l|ar|ea|ie|oa|oo)ves$', '\\1f'   ),  # -ves  +1%
+          (r'                     (l|n|w)ives$', '\\1ife' ),
+          (r'                 ^([^g])(oe|ie)s$', '\\1\\2' ),  # -ies  +5%
+          (r'                  (^ser|spec)ies$', '\\1ies' ),
+          (r'(eb|gp|ix|ipp|mb|ok|ov|rd|wn)ies$', '\\1ie'  ),
+          (r'                             ies$', 'y'      ), 
+          (r'    ([^rw]i|[^eo]a|^a|lan|y)ches$', '\\1che' ),  # -es   +5%
+          (r'  ([^c]ho|fo|th|ph|(a|e|xc)us)es$', '\\1e'   ),
+          (r'([^o]us|ias|ss|sh|zz|ch|h|o|x)es$', '\\1'    ),
+          (r'                               s$', ''       )): # -s    +85%
+            if re.search(r'(?i)' + pl.strip(), w):
+                return re.sub(r'(?i)' + pl.strip(), sg, w)
+    return w                                                  #       +1%
+
+# print(sg('avalanches')) # avalanche
+
+#---- TOKENIZER -----------------------------------------------------------------------------------
+# The tokenize() function identifies tokens (= words, symbols) and sentence breaks in a string.
+# The task involves handling abbreviations, contractions, hyphenation, emoticons, URLs, ...
+
+abbreviations = {
+    'en': set(('a.m.', 'art.', 'cf.', 'e.g.', 'etc.', 'i.e.', 'p.m.', 'prof.', 'vs.', 'w/'))
+}
+
+contractions = {
+    'en': set(("'d", "'m", "'s", "'ll", "'re", "'ve", "n't"))
+}
+
+def tokenize(s, language='en', known=[]):
+    """ Returns the string with punctuation marks split from words , 
+        and sentences separated by newlines.
+    """
+
+    def sentences(s):
+        for s in re.split(r'\n+', s):
+            s = s.strip()
+            s = re.sub(r'([.?!]+)([A-Z])', '\\1 \\2', s)             # Hello?Hello
+            for w in re.split(r'\s+', s):
+                w = tokens(w)
+                if re.search(u'\s[.?!]+(\s[\'"”’])?$', w):           # " Hello . "
+                    yield w + '\n'
+                else:
+                    yield w + ' '
+            yield '\n'
+
+    def tokens(w):
+        if w in known:
+            return w
+        if w in abbreviations.get(language, ()):                     # e.g.
+            return w
+        if w.startswith('('):                                        # (http://
+            return '( ' + tokens(w[1:])
+        if re.search(r'^https?://', w):                              # http://
+            return w
+        if re.search(r'[^:;-][),:]$', w):                            # U.S.,
+            return tokens(w[:-1]) + ' ' + w[-1]
+        if re.search(r'^([A-Za-z]\.)+$', w):                         # U.S.
+            return w
+        if re.search(r'^[A-Za-z]\.$', w):                            # T. De Smedt
+            return w
+        if re.search(r'^[A-Z][bcdfghjklmnpqrstvwxz]+\.$', w):        # Mr., Dr.
+            return w
+        if re.search(r'^[@#][0-9a-zA-z_]+$', w):                     # @name, #tag
+            return w
+        if w.endswith('...'):                                        # hello...
+            return tokens(w.rstrip('.')) + ' ...'
+        if w.endswith(('.', '?', '!')):                              # hello!
+            return tokens(w[:-1]) + ' ' + w[-1]
+        if w.endswith(("'", '"', u'”', u'’')):                       # 'ello!'
+            return tokens(w[:-1]) + ' ' + w[-1]
+        for x in contractions.get(language, ()):                     # we're
+            if w.endswith(x):
+                return tokens(w[:-len(x)]) + ' ' + x
+        w = re.sub(u'([,;:!?/|(){}\[\]\'`"“”‘’+=])', ' \\1 ', w)     # "hello,"
+        w = re.sub(r'([:;])\s+(\-?)\s+([()DOoPp])', '\\1\\2\\3', w)  # :-)
+        w = re.sub(u'(😊|😌|😏|😎|😀|😃|😄|😅|😂|😜|😛|😁|😐|😧|😦|😒|😞|😔|😫|😩|😠|😡|❤️|♥)', ' \\1 ', w)
+        w = re.sub(r'\s+', ' ', w)
+        w = w.strip()
+        return w
+
+    return ''.join(sentences(s)).strip()
+
+# s = u"RT @user: Check it out... https://www.textgain.com #Textgain cat.jpg"
+# s = u"There's a sentence on each line, each a space-separated string of tokens (i.e., words). :)"
+# s = u"Title\nA sentence.Another sentence. ‘A citation.’ By T. De Smedt. 😎"
+#
+# print(tokenize(s))
+
+def wc(s):
+    """ Returns a (word, count)-dict, lowercase.
+    """
+    f = re.split(r'\s+', s.lower())
+    f = collections.Counter(f)
+    return f
+
+# print(wc(tokenize('The cat sat on the mat.')))
+
+#---- PART-OF-SPEECH TAGGER -----------------------------------------------------------------------
+# Part-of-speech tagging predicts the role of each word in a sentence: noun, verb, adjective, ...
+# Different words have different roles according to their position in the sentence (context).
+# In 'Can I have that can of soda?', 'can' is used as a verb ('I can') and a noun ('can of').
+
+# We want to train a machine learning algorithm (Percepton) with context vectors as examples,
+# where each context vector includes the word, word suffix, and words to the left and right.
+
+# The part-of-speech tag of unknown words is predicted by their suffix (e.g., -ing, -ly)
+# and their context (e.g., a determiner is often followed by an adjective or a noun).
+
+def ctx(*w):
+    """ Returns the given [token, tag] list parameters as 
+        a context vector (i.e., token, tokens left/right) 
+        that can be used to train a part-of-speech tagger.
+    """
+    m = len(w) // 2 # middle
+    v = set()
+    for i, (w, tag) in enumerate(w):
+        i -= m
+        if i == 0:
+            v.add(' ')                       # bias
+            v.add('C %+d %s' % (i, w[:+1]))  # capitalization
+            v.add('* %+d %s' % (i, w[-6:]))  # token
+            v.add('^ %+d %s' % (i, w[:+3]))  # token head
+            v.add('$ %+d %s' % (i, w[-3:]))  # token suffix
+        else:
+            v.add('$ %+d %s' % (i, w[-3:]))  # token suffix left/right
+            v.add('p %+d %s' % (i, tag   ))
+    return v
+
+# print(ctx(['The', 'DET'], ['cat', 'NOUN'], ['sat', 'VERB'])) # context of 'cat'
+#
+# set([
+#     'x-1 The' , 
+#     't-1 DET' , 
+#     'b'       , 
+#     'h+0 c'   , 
+#     'w+0 cat' , 
+#     'x+0 cat' , 
+#     'x+1 sat' , 
+#     't+1 VERB', 
+# ])
+
+@printable
+class Sentence(list):
+
+    def __init__(self, s=''):
+        """ Returns the tagged sentence as a list of [token, tag]-values.
+        """
+        if isinstance(s, list):
+            list.__init__(self, s)
+        if isinstance(s, (str, unicode)) and s:
+            for w in s.split(' '):
+                w = u(w)
+                w = re.split(r'(?<!\\)/', w + '/')[:2]
+                w = [w.replace('\/', '/') for w in w]
+                self.append(w)
+
+    def __str__(self):
+        return ' '.join('/'.join(w.replace('/', '\\/') for w in w) for w in self)
+
+    def __repr__(self):
+        return 'Sentence(%s)' % repr(u(self))
+
+# s = 'The/DET cat/NOUN sat/VERB on/PREP the/DET mat/NOUN ./PUNC'
+# for w, tag in Sentence(s):
+#     print(w, tag)
+
+TAGGER = {
+    'en' : Perceptron.load(cd('en.json'))
+}
+
+def tag(s, language='en'):
+    """ Returns the tokenized + tagged string.
+    """
+    return '\n'.join(u(s) for s in parse(s, language))
+
+def parse(s, language='en'):
+    """ Returns the tokenized + tagged string,
+        as an iterator of Sentence objects.
+    """
+    model = TAGGER[language]
+    s = tokenize(s)
+    s = s.split('\n')
+    for s in s:
+        a = Sentence()
+        for w in nwise(Sentence('  %s  ' % s), n=5):
+            if len(a) > 1:
+                w[0][1] = a[-2][1] # use predicted tag left
+                w[1][1] = a[-1][1]
+            tag, p = top(model.predict(ctx(*w)))
+            a.append([w[2][0], tag])
+        yield a
+
+# for s in parse("We're all mad here. I'm mad. You're mad."):
+#     print(repr(s))
+
+PTB = {       # Penn Treebank tagset                                         # EN
+    u'NOUN' : ('NN', 'NNS', 'NNP', 'NNPS', 'NP'),                            # 30%
+    u'VERB' : ('VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'MD'),               # 14%
+    u'PUNC' : ('LS', 'SYM', '.', ',', ':', '(', ')', '``', "''", '#', '$'),  # 11%
+    u'PREP' : ('IN', 'PP'),                                                  # 10%
+    u'DET'  : ('DT', 'PDT', 'WDT', 'EX'),                                    #  9%
+    u'ADJ'  : ('JJ', 'JJR', 'JJS'),                                          #  7%
+    u'ADV'  : ('RB', 'RBR', 'RBS', 'WRB'),                                   #  4%
+    u'NUM'  : ('CD', 'NO'),                                                  #  4%
+    u'PRON' : ('PR', 'PRP', 'PRP$', 'WP', 'WP$'),                            #  3%
+    u'CONJ' : ('CC', 'CJ'),                                                  #  2%
+    u'X'    : ('FW',),                                                       #  2%
+    u'PRT'  : ('POS', 'PT', 'RP', 'TO'),                                     #  2%
+    u'INTJ' : ('UH',),                                                       #  1%
+}
+
+def universal(w, tag, tagset=PTB):
+    """ Returns a simplified tag (e.g., NOUN) for the given Penn Treebank tag (e.g, NNPS).
+    """
+    tag = tag.split('|')[0]
+    tag = tag.split('&')[0]
+    for u, tags in tagset.items():
+        if tag in tags:
+            return w, u
+    return w, tag
+
+# print(universal('rabbits', 'NNS'))
+
+# The 1989 Wall Street Journal corpus contains 1 million manually annotated words, e.g.:
+# Pierre/NNP Vinken/NNP ,/, 61/CD years/NNS old/JJ ,/, will/MD join/VB the/DT board/NN 
+# as/IN a/DT nonexecutive/JJ director/NN Nov./NNP 29/CD ./.
+
+# corpus = cd('/corpora/wsj.txt')
+# corpus = u(open(corpus).read())
+# corpus = corpus.split('\n')
+# corpus = corpus[:48000] # ~ 1M tokens
+
+# Create context vectors from WSJ sentences, using the simplified universal tagset.
+
+# data = []
+# for s in corpus:
+#     for w in nwise(Sentence('  %s  ' % s), n=5):
+#         w = [universal(*w) for w in w]
+#         if not w[2][1]:
+#             print w
+#         data.append((ctx(*w), w[2][1]))
+# 
+# print('%s sentences' % len(corpus))
+# print('%s tokens'    % len(data))
+# 
+# print(kfoldcv(Perceptron, data, k=3, n=5, weighted=True, verbose=True)) # 0.96 0.96
+# 
+# en = Perceptron(data, n=5)
+# en.save(cd('en.json'))
+# 
+# print(tag('What a great day! I love it.'))
+
+#---- PART-OF-SPEECH SEARCH -----------------------------------------------------------------------
+# The search() function yields parts of a part-of-speech-tagged sentence that match given pattern.
+# For example, 'ADJ* NOUN' yields all nouns in a sentence and optionally the preceding adjectives.
+
+# The chunked() function yields NP, VP, AP and PP phrases.
+# A NP (noun phrase) is a noun + preceding determiners and adjectives (e.g., 'the big black cat').
+# A VP (verb phrase) is a verb + preceding auxillary verbs (e.g., 'might be doing'). 
+
+TAG = set((
+    'NOUN' ,
+    'VERB' ,
+    'PUNC' ,
+    'PREP' ,
+    'DET'  ,
+    'ADJ'  ,
+    'ADV'  ,
+    'NUM'  ,
+    'PRON' ,
+    'CONJ' ,
+    'X'    ,
+    'PRT'  ,
+    'INTJ'
+))
+
+inflections = {
+    'aux'  : r"can|shall|will|may|must|could|should|would|might|'ll|'d",
+    'be'   : r"be|am|are|is|was|were|being|been|'m|'re|'s",
+    'have' : r"have|has|had|having|'ve"
+}
+
+class Phrase(Sentence):
+    pass
+
+def search(pattern, sentence, replace=[]):
+    """ Yields an iterator of matching Phrase objects from the given Sentence.
+        The search pattern is a sequence of tokens (talk-, -ing), tags (VERB),
+        token/tags (-ing/VERB), and control characters:
+        - ( ) group
+        -  |  options: NOUN|PRON CONJ|,
+        -  *  0+ tags: NOUN*
+        -  +  1+ tags: NOUN+
+        -  ?  <2 tags: NOUN?
+    """
+    R = r'(?<!\\)' # = not preceded by \
+    s = re.sub(r'\s+', ' ', pattern)
+    s = re.sub(r' ([*+?]) ', ' -\\1 ', s)
+    s = re.sub(R+r'([()^$])', ' \\1 ', s)
+    s = s.strip()
+    p = []
+
+    for w in s.split(' '):
+        if w in ('(', ')', '^', '$', '*', '+', '?', ''):
+            p.append(w)
+            continue
+        for k, v in replace:
+            w = w.replace(k.upper(), v)
+        for k, v in inflections.items():
+            w = w.replace(k.upper(), v)
+
+        try:
+            w, x, _ = re.split(R+r'([*+?])$', w)     # ['ADJ|-ing', '+']
+        except ValueError:
+            x = ''
+        if not re.search(R+r'/', w):
+            a = re.split(R+r'\|', w)                 # ['ADJ', '-ing']
+            for i, w in enumerate(a):
+                if w in TAG:
+                    a[i] = r'(?:\S+/%s)' % w         # '(?:\S+/ADJ)'
+                else:
+                    a[i] = r'(?:%s/[A-Z]{1,4})' % w  #             '(?:-ing/[A-Z]{1,4})'
+            w = '|'.join(a)                          # '(?:\S+/ADJ)|(?:-ing/[A-Z]{1,4})'
+        else:
+            w = re.sub(R+r'/', ')/(?:', w)           # '(?:-ing)/(?:VERB|ADJ)'
+
+        w = '(?:%s)' % w
+        w = '(?:%s )%s' % (w, x)                     # '(?:(?:-ing/[A-Z]{1,4}) )+'
+        w = re.sub(r'\(\?:-', r'(?:\S*', w)          #     '\S*ing/[A-Z]{1,4}'
+        w = re.sub(R+r'-/', r'\S*/', w)
+        p.append(w)
+
+    p = '(%s)' % ''.join(p)
+    for m in re.finditer(p, '%s ' % sentence, re.I):
+        m = ((m or '').strip() for m in m.groups())
+        m = map(Phrase, m)
+        m = tuple(m)
+        if len(m) > 1:
+            yield m
+        else:
+            yield m[0]
+
+# for m in \
+#  search('ADJ', 
+#     tag('A big, black cat.')):
+#      print(u(m))
+
+# for m, g1, g2 in \
+#  search('DET? (NOUN) AUX? BE (-ry)', 
+#     tag("The cats'll be hungry.")): 
+#     print(u(g1), u(g2))
+
+# for m, g1, g2 in \
+#  search('DET? (NOUN) AUX? BE (-ry)', 
+#     tag("The boss'll be angry!")):
+#     print(u(g1), u(g2))
+
+# for m, g1, g2, g3 in \
+#  search('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
+#     tag("Cats are more stubborn than dogs.")):
+#     print(u(g1), u(g2), u(g3))
+
+def chunked(sentence, language='en'):
+    """ Yields an iterator of (tag, Phrase)-tuples from the given Sentence,
+        with tags NP (noun phrase), VP (verb phrase), AP (adjective phrase)
+        or PP (prepositional phrase).
+    """
+    if language in ('de', 'en', 'nl'): # Germanic
+        P = (('NP', 'DET|PRON? NUM* (ADV|ADJ+ CONJ|, ADV|ADJ)* ADV|ADJ* -ing/VERB* NOUN+'),
+             ('NP', 'NOUN DET NOUN'),
+             ('NP', 'PRON'),
+             ('AP', '(ADV|ADJ+ CONJ|, ADV|ADJ)* ADV* ADJ+'),
+             ('VP', 'PRT|ADV* VERB+ ADV?'),
+             ('PP', 'PREP+'),
+             (  '', '-')
+        )
+    s = u(sentence)
+    s = re.sub(r'\s+', ' ', s)
+    while s:
+        for tag, p in P:
+            try:
+                m = next(search('^(%s)' % p, s))[0]; break
+            except StopIteration:
+                m = ''
+        if not m:
+            m = Phrase(s.split(' ', 1)[0])
+        if not m:
+            break
+        s = s[len(u(m)):]
+        s = s.strip()
+        yield tag, m
+
+# s = tag('The black cat is dozing lazily on the couch.')
+# for ch, s in chunked(s):
+#     print(ch, u(s))
+
+##### WWW #########################################################################################
+
+#---- OAUTH ---------------------------------------------------------------------------------------
+# The Open standard for Authorization (OAuth) is used to encrypt requests, for example by Twitter.
+# The protocol is documented on https://tools.ietf.org/html/rfc5849. Do not change the code below.
+
+def oauth(url, data={}, method='GET', key='', token='', secret=('','')):
+    """ Returns (url, data), where data is updated with OAuth 1.0 authorization.
+    """
+
+    def nonce():
+        return hashlib.md5(b('%s%s' % (time.time(), random.random()))).hexdigest()
+
+    def timestamp():
+        return int(time.time())
+
+    def encode(s):
+        return urlquote(b(s), safe='~')
+
+    def hash(s, key):
+        return hmac.new(b(s), b(key), hashlib.sha1).digest()
+
+    def base(url, data={}, method='GET'):
+        # https://tools.ietf.org/html/rfc5849#section-3.4.1
+        s  = encode(method.upper())  + '&'
+        s += encode(url.rstrip('?')) + '&'
+        s += encode('&'.join('%s=%s' % (
+             encode(k), 
+             encode(v)) for k, v in sorted(data.items())))
+        return s
+
+    def sign(url, data={}, method='GET', secret=('','')):
+        # https://tools.ietf.org/html/rfc5849#section-3.4.2
+        s  = encode(secret[0]) + '&' 
+        s += encode(secret[1])
+        s  = hash(s, base(url, data, method))
+        s  = base64.b64encode(s)
+        return s
+
+    data.update({
+        'oauth_nonce'            : nonce(),
+        'oauth_timestamp'        : timestamp(),
+        'oauth_consumer_key'     : key,
+        'oauth_token'            : token,
+        'oauth_signature_method' : 'HMAC-SHA1',
+        'oauth_version'          : '1.0',
+    })
+
+    data['oauth_signature'] = sign(url.split('?')[0], data, method, secret)
+
+    return url, data
+
+OAuth = collections.namedtuple('Oauth', ('key', 'token', 'secret'))
+
+#---- REQUESTS & STREAMS ---------------------------------------------------------------------------
+# The download(url) function returns the HTML (JSON, image data, ...) at the given url.
+# If this fails it will raise NotFound (404), Forbidden (403) or TooManyRequests (420).
+
+class Forbidden       (Exception): pass # 403
+class NotFound        (Exception): pass # 404
+class TooManyRequests (Exception): pass # 429
+class Timeout         (Exception): pass
+
+def request(url, data={}, headers={}):
+    """ Returns a file-like object to the given URL.
+    """
+    try:
+        return urlopen(Request(url, urlencode(data) if data else None, headers))
+
+    except URLError as e:
+        status = getattr(e, 'code', None) # HTTPError
+        if status == 401:
+            raise Forbidden
+        if status == 403:
+            raise Forbidden
+        if status == 404:
+            raise NotFound
+        if status == 420:
+            raise TooManyRequests
+        if status == 429:
+            raise TooManyRequests
+        raise e
+
+    except socket.error as e:
+        if 'timed out' in repr(e.args):
+            raise Timeout
+        else:
+            raise e
+
+def download(url, data={}):
+    """ Returns the content at the given URL.
+    """
+    return request(url, data).read()
+
+# print(u(download('http://textgain.com')))
+
+class stream(list):
+
+    def __init__(self, request, bytes=1024):
+        """ Returns an iterator of read data for the given request().
+        """
+        self.request = request
+        self.bytes = bytes
+
+    def __iter__(self):
+        b = '' # buffer
+        while 1:
+            try:
+                b = b + self.request.read(self.bytes)
+                b = b.split('\n')
+                for s in b[:-1]:
+                    if s.strip(): 
+                        yield s
+                b = b[-1]
+
+            except socket.error as e:
+                if 'timed out' in repr(e.args):
+                    raise Timeout
+                else:
+                    raise e
+
+#---- CACHE ---------------------------------------------------------------------------------------
+# The cached() function caches the output of a given function in a file.
+# This is useful with download() for performance (cfr. a browser cache).
+
+CACHE = cd('_cache')
+
+def cached(f, *args, **kwargs):
+    """ Returns and caches the string value from f(*args, **kwargs).
+    """
+    k  = repr(f.__name__)
+    k += repr(f.__doc__)
+    k += repr(args) 
+    k += repr(kwargs)
+    k  = hashlib.sha1(b(k)).hexdigest()[:16]
+    k  = os.path.join(CACHE, '%s.txt' % k)
+
+    if not os.path.exists(CACHE):
+        os.makedirs(CACHE)
+    if not os.path.exists(k):
+        v = f(*args, **kwargs)
+        f = codecs.open(k, 'w', encoding='utf-8')
+        f.write(u(v))
+        f.close()
+
+    return codecs.open(k, encoding='utf-8').read()
+
+# print(u(cached(download, 'https://www.textgain.com/')))
+
+#---- SEARCH --------------------------------------------------------------------------------------
+# The Bing Search API grants 5,000 free requests per month.
+# The Google Search API grants 100 free requests per day.
+
+Result = collections.namedtuple('Result', ('url', 'text'))
+
+def bing(q, page=1, language='en', key='4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yBP5o'):
+    """ Returns an iterator of (url, description)-tuples from Bing.
+    """
+    if 0 < page <= 100:
+        r  = 'https://api.datamarket.azure.com/bing/search/Web'
+        r += '?Query=\'%s'
+        r += '+language:%s\''
+        r += '&$skip=%i'
+        r += '&$top=10'
+        r += '&$format=json'
+        r %= (
+            urlquote(b(q)),
+            urlquote(b(language)), 1 + 10 * (page - 1))
+        k = base64.b64encode(b(':%s' % key))
+        r = request(r, headers={'Authorization': b'Basic ' + k})
+        r = json.loads(u(r.read()))
+
+        for r in r['d']['results']:
+            yield Result(
+                r['Url'],
+                r['Description']
+            )
+            time.sleep(0.1)
+
+def google(q, page=1, language='en', key='AIzaSyBxe9jC4WLr-Rry_5OUMOZ7PCsEyWpiU48'):
+    """ Returns an iterator of (url, description)-tuples from Google.
+    """
+    if 0 < page <= 10:
+        r  = 'https://www.googleapis.com/customsearch/v1'
+        r += '?cx=000579440470800426354:_4qo2s0ijsi'
+        r += '&key=%s' % key
+        r += '&q=%s'
+        r += '&lr=lang_%s'
+        r += '&start=%i'
+        r += '&num=10'
+        r += '&alt=json'
+        r %= (
+            urlquote(b(q)),
+            urlquote(b(language)), 1 + 10 * (page - 1))
+        r = request(r)
+        r = json.loads(u(r.read()))
+
+        for r in r['items']:
+            yield Result(
+                r['link'],
+                r['htmlSnippet']
+            )
+            time.sleep(0.1)
+
+def search(q, engine='bing', page=1, language='en', key=None):
+    """ Returns an iterator of (url, description)-tuples.
+    """
+    f = globals().get(engine, lambda *args: None)
+    if key:
+        return f(q, page, language, key)
+    else:
+        return f(q, page, language)
+
+# for url, description in search('textgain'):
+#     print(url)
+#     print(description)
+#     print('\n')
+
+#---- TWITTER -------------------------------------------------------------------------------------
+# Using u(), oauth(), request() and stream() we can define a Twitter class.
+# Twitter.search(q) gives you tweets that contain the word q.
+# Twitter.stream(q) gives you tweets that contain the word q, live as they are posted.
+# Twitter.follow(q) gives you tweets posted by username q.
+# Twitter.followers(q) gives you usernames of people that follow q.
+
+# https://dev.twitter.com/docs/api/1.1
+# https://dev.twitter.com/streaming/overview/request-parameters
+
+TWITTER = OAuth(
+    'zinzNx4FFyLDQkOaTnR9zYRq7',
+    '2365345020-snrMR8jQ69WDZ0KbSGvF1b4O7kIyynJp9v3UySL', (
+    'VFlV2M9mimg8bZTTct9qVuOVdWvak5MmCfghtdB6B8SOQvINbL',
+    'MrsrcmKkyzWOTjoKVsPLVvCYRtMcDYaIx0NKIb6yhRIhv'
+))
+
+Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'photo'))
+
+class Twitter(object):
+
+    def __init__(self, key=TWITTER.key, token=TWITTER.token, secret=TWITTER.secret):
+        self._key,     \
+        self._token,   \
+        self._secret = \
+            key, token, secret
+
+    def request(self, url, data):
+        url, data = oauth(url, data, 'GET', 
+            self._key, 
+            self._token, 
+            self._secret
+        )
+        return request(url + '?' + urlencode(data))
+
+    def parse(self, v):
+        t = Tweet(
+            u(v.get('id_str', '')),
+            u(v.get('text', '')),
+            u(v.get('created_at', '')),
+            u(v.get('lang', '')).replace('und', ''),
+            u(v.get('user', {}).get('screen_name', '')),
+            u(v.get('user', {}).get('profile_image_url', ''))
+        )
+        RT =  v.get('retweeted_status')
+        if RT:
+            # Replace truncated retweet (...) with full text.
+            t = t._replace(text=u('RT @%s: %s' % (RT['user']['screen_name'], RT['text'])))
+        return t
+
+    def stream(self, q):
+        """ Returns an iterator of tweets (live).
+        """
+        r = 'https://stream.twitter.com/1.1/statuses/filter.json'
+        r = self.request(r, {'track': b(q)})
+        for v in stream(r):
+            v = u(v)
+            v = json.loads(v)
+            v = self.parse(v)
+            yield v
+            time.sleep(1)
+
+    def search(self, q):
+        """ Returns an iterator of tweets.
+        """
+        id = ''
+        for i in range(10):
+            r = 'https://api.twitter.com/1.1/search/tweets.json'
+            r = self.request(r, {'q': b(q), 'max_id': id, 'count': 100})
+            r = json.loads(u(r.read()))
+            r = r.get('statuses', [])
+            for v in r:
+                yield self.parse(v)
+                time.sleep(0.05) # ~= 180 requests / 15 minutes
+            if len(r) > 0:
+                id = int(v['id_str']) - 1
+            if len(r) < 100:
+                raise StopIteration
+
+    def follow(self, q):
+        """ Returns an iterator of tweets for the given username.
+        """
+        return self.search(u'from:' + q)
+
+    def followers(self, q):
+        """ Returns an iterator of followers for the given username.
+        """
+        id = -1
+        while 1:
+            r = 'https://api.twitter.com/1.1/followers/list.json'
+            r = self.request(r, {'screen_name': b(q.strip('@')), 'cursor': id, 'count': 100})
+            r = json.loads(u(r.read()))
+            for v in r.get('users', []):
+                yield v.get('screen_name')
+                time.sleep(0.5) # ~= 15 requests / 15 minutes
+            try:
+                id = r['next_cursor']
+            except:
+                raise StopIteration
+
+# t = Twitter()
+
+# for tweet in t.search('kuffar'):
+#     print(tweet.text)
+
+# for tweet in t.stream('kuffar'):
+#     print(tweet.text)
+
+# for username in t.followers('textgain'):
+#     print(username)
+
+#---- WIKIPEDIA -----------------------------------------------------------------------------------
+
+BIBLIOGRAPHY = set((
+    'div'             ,
+    'table'           , # infobox
+    '#references'     , # references title
+    '.reflist'        , # references
+    '.reference'      , # [1]
+    '.mw-editsection' , # [edit]
+    '.noprint'        , # [citation needed]
+))
+
+def wikipedia(q='', language='en'):
+    """ Returns the HTML source of the given Wikipedia article (or '').
+    """
+    time.sleep(1)
+    r  = 'https://%s.wikipedia.org/w/api.php' % language
+    r += '?action=parse'
+    r += '&format=json'
+    r += '&redirects=1'
+    r += '&page=%s' % urllib.quote(q)
+    r  = download(r)
+    r  = json.loads(r)
+    try:
+        return u'<h1>%s</h1>\n%s' % (
+            u(r['parse']['title']),
+            u(r['parse']['text']['*']))
+    except KeyError:
+        return u''
+
+# 1. Parse HTML source
+
+# src = cached(wikipedia, 'Arnold Schwarzenegger', language='en')
+# dom = DOM(src) # see below
+
+# 2. Parse article (full, plaintext):
+
+# article = plaintext(dom, ignore=BIBLIOGRAPHY)
+# print(article)
+
+# 3. Parse summary (= 1st paragraph):
+
+# summary = plaintext(dom('p')[0])
+# print(summary)
+
+# 4. Parse links:
+
+# for a in dom('a[href^="/wiki"]'):
+#     a = a.href.split('/')[-1]
+#     a = a.replace('_', ' ')
+#     a = decode(a)
+#     print(a)
+
+# 5. Guess gender (he/she):
+
+# s = ' %s ' % summary.lower()
+# gender = s.count( ' he ') + \
+#          s.count(' his ') > \
+#          s.count(' she ') + \
+#          s.count(' her ') and 'm' or 'f'
+# print(gender)
+
+# 6. Guess age:
+
+# box = DOM(src)('.infobox')[0]
+# age = plaintext(box('th:contains("born") + td span.ForceAgeToShow')[0])
+# age = re.search(r'[0-9]+', age).group(0)
+# age = int(age)
+# print(age)
+
+#---- RSS -----------------------------------------------------------------------------------------
+
+Story = collections.namedtuple('Story', ('url', 'text', 'date', 'language', 'author'))
+
+def rss(xml):
+    """ Returns an iterator of stories from the given XML string (RSS feed).
+    """
+    t = ElementTree.fromstring(b(xml))
+    for e in t.iter('item'):
+        yield Story(
+            u(e.findtext('link'             , '')),
+            u(e.findtext('description'      , '')),
+            u(e.findtext('pubDate'          , '')),
+            u(t.findtext('channel/language' , '')).split('-')[0],
+            u(e.findtext('author'           , ''))
+        )
+
+def atom(xml):
+    """ Returns an iterator of stories from the given XML string (Atom feed).
+    """
+    t = ElementTree.fromstring(b(xml))
+    for e in t.iter('entry'):
+        yield Story(
+            u(e.findtext('link'             , '')),
+            u(e.findtext('summary'          , '')),
+            u(e.findtext('updated'          , '')), u'',
+            u(e.findtext('author/name'      , ''))
+        )
+
+def feed(url):
+    time.sleep(1)
+    s = download(url)
+    for f in (rss, atom):
+        for r in f(s):
+            yield r
+
+# for story in feed('http://feeds.washingtonpost.com/rss/world'):
+#     print(story)
+
+#---- MAIL ----------------------------------------------------------------------------------------
+# The mail() function will send a HTML-formatted e-mail from textgain.live@gmail.com.
+
+EMAIL, PASSWORD, SMTP = \
+    'textgain.live@gmail.com', 'g4Z74a5vF6FHnuDx', 'smtp.gmail.com:465'
+
+def mail(to, subject, message):
+    """ Sends a HTML e-mail using SSL encryption.
+    """
+
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text      import MIMEText
+
+    m = MIMEMultipart()
+    m['From'] = EMAIL
+    m['To'] = to
+    m['Subject'] = subject
+    m.attach(MIMEText(b(message), 'html', 'utf-8')) # html/plain
+    m = m.as_string()
+
+    s = smtplib.SMTP_SSL(SMTP) # SSL
+    s.login(EMAIL, PASSWORD)
+    s.sendmail(EMAIL, to, m)
+    s.close()
+
+# mail('tom@textgain.com', 'test', u'<b>Héllø</b>')
+
+###################################################################################################
+
+#---- DOM -----------------------------------------------------------------------------------------
+# The DOM or Document Object Model is a representation of a HTML document as a nested tree.
+# The DOM can be searched for specific elements using CSS selectors.
+
+# DOM('<div> <p>hello</p></div>') results in:
+# DOM([
+#     Element('div', [
+#         Text(' '),
+#         Element('p', [
+#             Text('hello')
+#         ])
+#     ])
+# ])
+
+SELF_CLOSING = set(( # <img src="" />
+    'area'    ,
+    'base'    ,
+    'br'      ,
+    'col'     ,
+    'command' ,
+    'embed'   ,
+    'hr'      ,
+    'img'     ,
+    'input'   ,
+    'keygen'  ,
+    'link'    ,
+    'meta'    ,
+    'param'   ,
+    'source'  ,
+    'track'   ,
+    'wbr'     ,
+))
+
+def quote(s):
+    """ Returns the quoted string.
+    """
+    if '"' in s:
+        return "'%s'" % s
+    else:
+        return '"%s"' % s
+
+class Node(object):
+
+    def __init__(self):
+        self.parent = None
+        self.children = []
+
+    def __iter__(self):
+        return iter(self.children)
+
+@printable
+class Text(Node):
+
+    def __init__(self, data):
+        self.data = data
+
+    def __str__(self):
+        return self.data
+
+@printable
+class Element(Node):
+
+    def __init__(self, tag, attributes={}):
+        Node.__init__(self)
+        self.tag = tag
+        self.attributes = collections.OrderedDict(attributes)
+
+    def __getitem__(self, k):
+        return self.attributes.get(k)  # a['href']
+
+    def __getattr__(self, k):
+        return self.attributes.get(k)  # a.href
+
+    def __call__(self, css):
+        return selector(self, css)     # div('a')
+
+    def __repr__(self):
+        return 'Element(tag=%s)' % repr(self.tag)
+
+    def __str__(self):
+        a = ' '.join('%s=%s' % (k, quote(v)) for k, v in self.attributes.items())
+        a = ' ' + a if a else ''
+        if self.tag in SELF_CLOSING:
+            return u'<%s%s />' % (
+                self.tag, a)
+        else:
+            return u'<%s%s>%s</%s>' % (
+                self.tag, a, self.html, self.tag)
+
+    @property
+    def html(self):
+        return ''.join(u(n) for n in self)
+
+    @property
+    def next(self):
+        """ Yields the next sibling in Element.parent.children.
+        """
+        if self.parent:
+            for n in self.parent.children[self.parent.children.index(self)+1:]:
+                if isinstance(n, Element):
+                    return n
+
+    @property
+    def previous(self):
+        """ Yields the previous sibling in Element.parent.children.
+        """
+        if self.parent:
+            for n in self.parent.children[:self.parent.children.index(self)]:
+                if isinstance(n, Element):
+                    return n
+
+    def match(self, tag='*', attributes={}):
+        """ Returns True if the element has the given tag and attributes.
+        """
+        if tag != '*':
+            if tag != self.tag:
+                return False
+        for k, v in attributes.items():
+            if self[k] is None:
+                return False
+            if self[k] != v and not type(v) is REGEX:
+                return False
+            if self[k] != v and not v.search(self[k]):
+                return False
+        return True
+
+    def find(self, tag='*', attributes={}, depth=1e10):
+        """ Returns an iterator of nested elements with the given tag and attributes.
+        """
+        if depth > 0:
+            for n in self:
+                if isinstance(n, Element):
+                    if n.match(tag, attributes):
+                        yield n
+                    for n in n.find(tag, attributes, depth-1):
+                        yield n
+
+@printable
+class Document(HTMLParser, Element):
+
+    def __init__(self, html):
+        """ Document Object Model, a tree of Element and Text nodes from the given HTML string.
+        """
+        HTMLParser.__init__(self)
+        Element.__init__(self, tag=None)
+        self.head = None
+        self.body = None
+        self._stack = [self]
+        self.feed(u(html))
+
+    def __str__(self):
+        return self.html.strip()
+
+    def handle_entityref(self, name):
+        self.handle_data('&%s;' % name)
+
+    def handle_charref(self, name):
+        self.handle_data('&#%s;' % name)
+
+    def handle_data(self, data):
+        try:
+            n = Text(data)
+            n.parent = self._stack[-1]
+            n.parent.children.append(n)
+        except:
+            pass
+
+    def handle_starttag(self, tag, attributes):
+        try:
+            n = Element(tag, attributes)
+            n.parent = self._stack[-1]
+            n.parent.children.append(n)
+            # New elements will be nested inside,
+            # unless it is self-closing (<br />).
+            if tag not in SELF_CLOSING:
+                self._stack.append(n)
+        except:
+            pass
+
+    def handle_endtag(self, tag):
+        try:
+            if tag not in SELF_CLOSING:
+                n = self._stack.pop()
+            if n.tag == 'head':
+                self.head = n
+            if n.tag == 'body':
+                self.body = n
+        except:
+            pass
+
+DOM = Document
+
+# dom = DOM(download('https://www.textgain.com'))
+# 
+# for a in dom.find('a'):
+#     print(1, a.href)
+#
+# for a in dom.find('a', {'href': re.compile(r'^https://')}):
+#     print(2, a.href)
+
+#---- CSS SELECTORS -------------------------------------------------------------------------------
+# CSS selectors (http://www.w3schools.com/cssref/css_selectors.asp) yield a list of child elements.
+# For example div('a.external') returns a list of <a class="external"> elements in the given <div>.
+
+# The approach is very powerful to build HTML crawlers & parsers.
+# Here is the age of Arnold Schwarzenegger parsed from Wikipedia:
+
+# s = download('https://en.wikipedia.org/wiki/Arnold_Schwarzenegger')
+# t = DOM(s)
+# t = t('table.infobox')[0]
+# t = t('th:contains("born") + td')[0]  # <th>Born:<th><td> ... </td>
+# s = plaintext(t)
+# print(s)
+
+SELECTOR = re.compile(''.join((
+    r'^',
+    r'([+<>])?',                           # combinator + < >
+    r'(\w+|\*)?',                          # tag
+    r'((?:[.#][-\w]+)|(?:\[.*?\]))?',      # attributes # . [=]
+    r'(\:first-child|\:contains\(.*?\))?', # pseudo :
+    r'$'
+)))
+
+CLASS = \
+    r'(^|\s)%s(\s|$)'
+
+def selector(element, s):
+    """ Returns a list of nested elements that match the given CSS selector chain.
+    """
+    m = []
+    s = s.strip()
+    s = s.lower()                                               # case-insensitive
+    s = re.sub(r'\s+', ' ', s)
+    s = re.sub(r'([,+<>])\s', '\\1', s)
+
+    for s in s.split(','):                                      # div, a
+        e = [element]
+        for s in s.split(' '):
+            combinator, tag, a, pseudo = SELECTOR.search(s).groups('')
+
+            tag = tag or '*'                                    # *
+
+            if not a:                                           # a
+                a = {}
+            elif a.startswith('#'):                             # a#id
+                a = {   'id': re.compile(        a[1:], re.I)}
+            elif a.startswith('.'):                             # a.class
+                a = {'class': re.compile(CLASS % a[1:], re.I)}
+            elif a.startswith('['):                             # a[href]
+                a = a.strip('[]')
+                a = a.replace('"', '')
+                a = a.replace("'", '')
+
+                k, op, v = (re.split(r'([\^\$\*]?=)', a, 1) + ['=', r'.*'])[:3]
+
+                if op ==  '=':
+                    a = {k: re.compile(r'^%s$' % v, re.I)}      # a[href="https://textgain.com"]
+                if op == '^=':
+                    a = {k: re.compile(r'^%s'  % v, re.I)}      # a[href^="https"]
+                if op == '$=':
+                    a = {k: re.compile(r'%s$'  % v, re.I)}      # a[href$=".com"]
+                if op == '*=':
+                    a = {k: re.compile(r'%s'   % v, re.I)}      # a[href*="textgain"]
+
+            if combinator == '':
+                e = (e.find(tag, a) for e in e)
+                e = list(itertools.chain(*e))                   # div a
+            if combinator == '>':
+                e = (e.find(tag, a, 1) for e in e)
+                e = list(itertools.chain(*e))                   # div > a
+            if combinator == '<':
+                e = map(lambda e: e.parent, e)
+                e = [e for e in e if e and e.match(tag, a)]     # div < a
+            if combinator == '+':
+                e = map(lambda e: e.next, e)
+                e = [e for e in e if e and e.match(tag, a)]     # div + a
+
+            if pseudo == ':first-child':
+                e = [e for e in e if not e.previous]            # div a:first-child
+            if pseudo.startswith(':contains'):
+                s = pseudo[9:]
+                s = s.strip('()"\'')
+                e = [e for e in e if s in e.html.lower()]       # div:contains("hello")
+
+        m.extend(e)
+    return m
+
+# dom = DOM(download('https://www.textgain.com'))
+# 
+# print(dom('#nav > h1 b')[0].html)
+# print(dom('meta[name="description"]')[0].content)
+# print(dom('a[href^="https"]:first-child'))
+# print(dom('a[href^="https"]:contains("love")'))
+
+#---- PLAINTEXT -----------------------------------------------------------------------------------
+# The plaintext() function traverses a DOM HTML element, strips all tags while keeping Text data.
+
+BLOCK = set((
+    'blockquote' ,
+    'center'     ,
+    'div'        ,
+    'dl'         ,
+    'figure'     ,
+    'figcaption' ,
+    'form'       ,
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'header'     , 
+    'hr'         ,
+    'main'       ,
+    'ol'         ,
+    'p'          ,
+    'pre'        ,
+    'section'    ,
+    'title'      ,
+    'table'      ,
+    'textarea'   ,
+    'ul'         ,
+))
+
+PLAIN = {
+     'li' : lambda s: '* %s\n' % re.sub(r'\n\s+', '\n&nbsp;&nbsp;', s),
+     'h1' : lambda s: s + '\n' + "-" * len(s),
+     'h2' : lambda s: s + '\n' + "-" * len(s),
+     'br' : lambda s: s + '\n'  ,
+     'tr' : lambda s: s + '\n\n',
+     'th' : lambda s: s + '\n'  ,
+     'td' : lambda s: s + '\n'  ,
+}
+
+def plaintext(element, keep={}, ignore=set(('head', 'script', 'form')), format=PLAIN):
+    """ Returns the given element as a plaintext string.
+        A (tag, [attributes])-dict to keep can be given.
+    """
+    if not isinstance(element, Element): # str?
+        element = DOM(element)
+
+    # CSS selectors in ignore list (e.g., form.submit)
+    ignore = set(selector(element, ', '.join(ignore)))
+
+    def r(n): # node recursion
+        s = ''
+        for n in n:
+            if isinstance(n, Text):
+                # Collapse spaces, decode entities (&amp;)
+                s += re.sub(r'\s+', ' ', unescape(n.data))
+            if isinstance(n, Element):
+                if n in ignore:
+                    continue
+                if n.tag in BLOCK:
+                    s += '\n\n'
+                if n.tag in keep:
+                    a  = ' '.join(['%s=%s' % (k, quote(n[k])) for k in keep[n.tag] if n[k] != None])
+                    a  = ' ' + a if a else ''
+                    s += '<%s%s>%s</%s>' % (n.tag, a, r(n), n.tag)
+                else:
+                    s += format.get(n.tag, lambda s: s)(r(n))
+                if n.tag in BLOCK:
+                    s += '\n\n'
+        return s.strip()
+
+    s = r(element)
+    s = re.sub(r'(\s) +' , '\\1' , s) # no left indent
+    s = re.sub(r'\n\n+'  , '\n\n', s) # no empty lines
+    s = re.sub(r'&nbsp;' , ' '   , s) # exdent bullets
+    s = re.sub(r'\n +\*' , '\n*' , s) # dedent bullets
+    return s
+
+# dom = DOM(download('https://www.textgain.com'))
+# txt = plaintext(dom, keep={'a': ['href']})
+# 
+# print(txt)
+
+def encode(s):
+    """ Returns a byte string with encoded entities.
+    """
+    s = s.replace('&' , '&amp;' )
+    s = s.replace('<' , '&lt;'  )
+    s = s.replace('>' , '&gt;'  )
+    s = s.replace('"' , '&quot;')
+    s = s.replace("'" , '&apos;')
+   #s = s.replace('\n', '&#10;' )
+   #s = s.replace('\r', '&#13;' )
+    s = b(s)
+    return s
+
+def decode(s):
+    """ Returns a Unicode string with decoded entities.
+    """
+    s = b(s)
+    s = unescape(s)
+    s = urldecode(s)
+    s = u(s)
+    return s
+
+##### DB ##########################################################################################
+
+#---- DATE ----------------------------------------------------------------------------------------
+# The date() function attempts to parse a Date object from a string or timestamp (int/float).
+
+DATE = (
+#    http://strftime.org           # DATE                            USED BY:
+    '%a %b %d %H:%M:%S +0000 %Y',  # Mon Jan 31 10:00:00 +0000 2000  Twitter
+    '%Y-%m-%dT%H:%M:%S+0000',      # 2000-01-31T10:00:00+0000        Facebook
+    '%Y-%m-%dT%H:%M:%SZ',          # 2000-01-31T10:00:00Z            Bing
+    '%Y-%m-%d %H:%M:%S',           # 2000-01-31 10:00:00
+    '%Y-%m-%d %H:%M',              # 2000-01-31 10:00
+    '%Y-%m-%d',                    # 2000-01-31
+)
+
+def rfc_2822(s):                   # Mon, 31 Jan 2000 10:00:00 GMT   RSS
+    return email.utils.mktime_tz(
+           email.utils.parsedate_tz(s))
+
+class DateError(Exception):
+    pass
+
+@printable
+class Date(datetime.datetime):
+
+    format = '%Y-%m-%d %H:%M:%S'
+
+    # Date.year
+    # Date.month
+    # Date.day
+    # Date.minute
+    # Date.second
+
+    @property
+    def week(self):
+        return self.isocalendar()[1]
+
+    @property
+    def weekday(self):
+        return self.isocalendar()[2]
+
+    @property
+    def timestamp(self):
+        return int(time.mktime(self.timetuple()))
+
+    def __str__(self):
+        return self.strftime(self.format)
+
+    def __repr__(self):
+        return "Date(%s)" % repr(str(self))
+
+def date(v=None, format='%Y-%m-%d %H:%M:%S'):
+    """ Returns a Date from the given timestamp or date string.
+    """
+    if v is None:
+        return Date.now()
+    if isinstance(v, (int, float)):
+        return Date.fromtimestamp(v)
+    if isinstance(v, Date):
+        return Date.fromtimestamp(v.timestamp)
+    try:
+        return Date.fromtimestamp(rfc_2822(v)) 
+    except: 
+        pass
+    for f in (format,) + DATE:
+        try:
+            return Date.strptime(v, f)
+        except:
+            pass
+    raise DateError('unknown date format: %s' % repr(v))
+
+##### WWW #########################################################################################
+
+#---- APP -----------------------------------------------------------------------------------------
+
+# { 404: ('Not Found', 'Nothing matches the given URI')}
+STATUS = BaseHTTPServer.BaseHTTPRequestHandler.responses
+STATUS[429] = ('Too Many Requests', '')
+
+SECOND, MINUTE, HOUR, DAY = 1, 1*60, 1*60*60, 1*60*60*24
+
+# A pool of recycled threads is more efficient than a
+# thread / request (see SocketServer.ThreadingMixIn).
+class ThreadPoolMixIn(SocketServer.ThreadingMixIn):
+
+    def __init__(self, threads=10):
+        self.pool = multiprocessing.pool.ThreadPool(threads)
+
+    def process_request(self, *args):
+        self.pool.apply_async(self.process_request_thread, args)
+
+class RouteError(Exception):
+    pass
+
+class Router(dict):
+
+    def __setitem__(self, path, f):
+        """ Defines the handler function for the given path.
+        """
+        return dict.__setitem__(self, path.strip('/'), f)
+
+    def __getitem__(self, path):
+        """ Returns the handler function for the given path.
+        """
+        return dict.__getitem__(self, path.strip('/'))
+
+    def __call__(self, path, query):
+        """ Returns the value of the handler for the given path,
+            or the parent path if no handler is found.
+        """
+        path = path.strip('/')
+        path = path.split('/')
+        for i in reversed(range(len(path) + 1)):
+            try:
+                f = self['/'.join(path[:i])]
+            except:
+                continue
+            return f(*path[i:], **query)
+        raise RouteError
+
+class HTTPRequest(threading.local):
+
+    def __init__(self):
+        self.app     = None
+        self.ip      = None
+        self.method  = 'GET'
+        self.path    = '/'
+        self.query   = {}
+        self.headers = {}
+
+class HTTPResponse(threading.local):
+
+    def __init__(self):
+        self.code    = 200
+        self.headers = {}
+
+class HTTPError(Exception):
+
+    def __init__(self, code=404):
+        self.code = code
+
+WSGIServer = wsgiref.simple_server.WSGIServer
+
+class App(ThreadPoolMixIn, WSGIServer):
+
+    def __init__(self, host='127.0.0.1', port=8080, threads=10):
+        """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
+        """
+        WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
+        ThreadPoolMixIn.__init__(self, threads)
+        self.set_app(self.__call__)
+        self.rate     = {}
+        self.router   = Router()
+        self.request  = HTTPRequest()
+        self.response = HTTPResponse()
+
+    def route(self, path, rate=None, key=lambda request: request.ip):
+        """ The @app.route(path) decorator defines the handler for the given path.
+            The handler(*path, **query) returns a str or dict for the given path.
+            With rate=(n, t), the IP-address is granted n requests per t seconds,
+            before raising a 429 Too Many Requests error.
+        """
+        # http://127.0.0.1:8080/api/tag?q=Hello+world!&language=en
+        # app = App()
+        # @app.route('/api/tag')
+        # def api_tag(q='', language='en', rate=(100, HOUR)):
+        #     return '%s' % tag(q)
+        def decorator(f):
+            def wrapper(*args, **kwargs):
+                if rate:
+                    t = time.time()                    # now
+                    i, d = self.rate.get(key, (0, t))  # used, since
+                    if rate[1] < t - d:                # now - since > interval?
+                        n = 0
+                    if rate[0] < i + 1:                # used > limit?
+                        raise HTTPError(429)
+                    self.rate[key] = (i + 1, t)
+                return f(*args, **kwargs)
+            self.router[path] = wrapper
+            return wrapper
+        return decorator
+
+    def run(self, debug=True):
+        """ Starts the server.
+        """
+        print('Starting server at %s:%s... press ctrl-c to stop.' % self.server_address)
+        self.debug = debug
+        self.serve_forever()
+
+    def __call__(self, env, start_response):
+
+        # Parse HTTP headers.
+        # 'HTTP_USER_AGENT' => 'User-Agent'
+        def headers(env):
+            for k, v in env.items():
+                if k.startswith('HTTP_'):
+                    k = k[5:]
+                    k = k.replace('_', '-')
+                    k = k.title()
+                    yield u(k), u(v)
+
+        # Parse HTTP GET and POST data.
+        # '?page=1' => (('page', '1'),)
+        def query(env):
+            GET, POST = (
+                env['QUERY_STRING'],
+                env['wsgi.input'].read(int(env.get('CONTENT_LENGTH') or 0))
+            )
+            for k, v in urlparse.parse_qs(GET , True).items():
+                yield u(k), u(v[-1])
+            for k, v in urlparse.parse_qs(POST, True).items():
+                yield u(k), u(v[-1])
+
+        # Set App.request (thread-safe).
+        r = self.request
+        r.__dict__.update({
+            'app'     : self,
+            'ip'      : env['REMOTE_ADDR'],
+            'method'  : env['REQUEST_METHOD'],
+            'path'    : env['PATH_INFO'],
+            'query'   : dict(query(env)),
+            'headers' : dict(headers(env)),
+        })
+
+        # Set App.repsonse (thread-safe).
+        r = self.response
+        r.__dict__.update({
+            'code'    : 200,
+            'headers' : {
+                'content-type': 'text/html; charset=utf-8', 
+                'access-control-allow-origin': '*' # CORS
+            }
+        })
+
+        try:
+            v = self.router(
+                self.request.path, 
+                self.request.query
+            )
+        except Exception as e:
+            if   isinstance(e, HTTPError):
+                r.code = e.code
+            elif isinstance(e, RouteError):
+                r.code = 404
+            else:
+                r.code = 500
+            # Error page (with traceback if debug=True):
+            v  = '<h1>%s</h1><p>%s</p>' % STATUS[r.code]
+            v += '<pre>%s</pre>' % traceback.format_exc() \
+                    if self.debug else ''
+
+        if isinstance(v, dict): # dict => JSON-string
+            r.headers['content-type'] = 'application/json'
+            v = json.dumps(v)
+        if hasattr(v, '__str__'):
+            v = v.__str__()
+        if v is None:
+            v = ''
+
+        # https://www.python.org/dev/peps/pep-0333/#the-start-response-callable
+        start_response('%s %s' % (r.code, STATUS[r.code]), list(r.headers.items()))
+        return [b(v)]
+
+app = application = App(threads=10)
+
+# http://127.0.0.1:8080/products?page=1
+# @app.route('/')
+# def index(*path, **query):
+#     #raise HTTPError(500)
+#     return 'Hello world! %s %s' % (repr(path), repr(query))
+
+# http://127.0.0.1:8080/api/tag?q=Hello+world!&language=en
+# @app.route('/api/tag', rate=(10, MINUTE))
+# def api_tag(q='', language='en'):
+#     return tag(q, language)
+
+# app.run()
+
+##### NET #########################################################################################
+
+#---- GRAPH ---------------------------------------------------------------------------------------
+# A graph is a set of nodes and edges (i.e., connections between nodes).
+# A graph is stored as an adjacency matrix {node1: {node2: edge weight}}.
+# It can then be analysed to find the shortest paths (e.g., navigation),
+# clusters (e.g., communities in social networks), the strongest nodes
+# (e.g., search engines), and so on.
+
+# Edges can have a weight, which is the cost or length of the path.
+# Edges can have a type, for example 'is-a' or 'is-part-of'.
+
+def dfs(g, n, f=lambda n: True, v=set()):
+    """ Depth-first search.
+        Calls f(n) on the given node, its adjacent nodes if True, and so on.
+    """
+    v.add(n) # visited?
+    if f(n) != False:
+        for n in g.get(n, {}).keys():
+            if n not in v:
+                dfs(g, n, f, v)
+
+def bfs(g, n, f=lambda n: True, v=set()):
+    """ Breadth-first search (spreading activation).
+        Calls f(n) on the given node, its adjacent nodes if True, and so on.
+    """
+    q = [n]
+    while q:
+        n = q.pop(0)
+        if f(n) != False and not n in v:
+            q.extend(g.get(n, {}).keys())
+            v.add(n)
+
+# def visit(n):
+#     print(n)
+#
+# g = {
+#     'a': {'b': 1},
+#     'b': {'c': 1, 'd': 1},
+#     'c': {'x': 1}
+# }
+# dfs(g, 'a', visit)
+# bfs(g, 'a', visit)
+
+def shortest_paths(g, n1, n2=None):
+    """ Returns an iterator of shortest paths,
+        where each path is a list of node id's.
+    """
+    # Dijkstra's algorithm, based on Connelly Barnes' implementation:
+    # http://aspn.activestate.com/ASPN/Cookbook/Python/Recipe/119466
+
+    q = [(0.0, n1, ())]
+    v = set() # visited?
+    while q:
+        d, n, p = heappop(q)
+        if n not in v:
+            v.add(n)
+            p += (n,)
+            if n2 == None and n1 != n:
+                yield p
+            if n2 != None and n2 == n:
+                yield p
+                raise StopIteration
+            for n, w in g.get(n, {}).items(): # {n1: {n2: cost}}
+                if n not in v:
+                    heappush(q, (d + w, n, p))
+
+def shortest_path(g, n1, n2):
+    """ Returns the shortest path from n1 to n2.
+    """
+    try:
+        return next(shortest_paths(g, n1, n2))
+    except StopIteration:
+        return None
+
+# g = {
+#     'a': {'b': 1, 'x': 1},  # A -> B -> C -> D
+#     'b': {'c': 1},          #   –> X ––––––>
+#     'c': {'d': 1},
+#     'x': {'d': 1}
+# }
+# print(shortest_path(g, 'a', 'd'))
+
+def betweenness(g, k=1000):
+    """ Returns a dict of node id's and their centrality score (0.0-1.0),
+        which is the amount of shortest paths that pass through a node.
+    """
+    n = set(itertools.chain(g, *g.values())) # all nodes
+    w = collections.Counter(n)
+    if k:
+        n = list(shuffled(n))[:k]
+    for n in n:
+        for p in shortest_paths(g, n):
+            for n in p[1:-1]:
+                w[n] += 1
+    # Normalize 0.0-1.0:
+    m = max(w.values())
+    m = float(m or 1)
+    w = {n: w / m for n, w in w.items()}
+    return w
+
+def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
+    """ Returns a dict of node id's and their centrality score (0.0-1.0),
+        which is the amount of indirect incoming links to a node.
+    """
+    n = set(itertools.chain(g, *g.values())) # all nodes
+    v = dict.fromkeys(n, 1.0 / len(n))
+    for i in range(iterations):                            #       A -> B -> C
+        p = v.copy() # prior pagerank                      #      0.3  0.3  0.3
+        for n1 in v:                                       # i=0  0.3  0.6  0.6
+            for n2, w in g.get(n1, {}).items():            # i=1  0.3  0.9  1.2
+                v[n2] += damping * w * p[n1] / len(g[n1])  # i=2  0.3  1.2  2.1
+            v[n1] += 1 - damping                           # ...
+        # Normalize:
+        d = sum(w ** 2 for w in v.values()) ** 0.5 or 1
+        v = {n: w / d for n, w in v.items()}
+        # Converged?
+        e = sum(abs(v[n] - p[n]) for n in v)
+        if e < epsilon * len(n):
+            break
+    return v
+
+def cliques(g):
+    """ Returns an iterator of maximal cliques,
+        where each clique is a set of node id's
+        that are all connected to each other.
+    """
+
+    # Bron-Kerbosch's backtracking algorithm.
+    def search(r, p, x):
+        if p or x:
+            u = p | x # pivot
+            u = u.pop()
+            for n in p - set(g[u]):
+                for c in search( 
+                  r | set((n,)), 
+                  p & set(g[n]), 
+                  x & set(g[n])):
+                    yield c
+                p.remove(n)
+                x.add(n)
+        else:
+            yield r
+
+    return search(set(), set(g), set())
+
+# g = {
+#     'a': dict.fromkeys(('b', 'c'), 1),  #    A
+#     'b': dict.fromkeys(('a', 'c'), 1),  #  /   \
+#     'c': dict.fromkeys(('a', 'b'), 1),  # B ––– C   X
+#     'x': {}
+# }
+# print(list(cliques(g)))
+
+def communities(g, k=4):
+    """ Returns an iterator of (overlapping) communities, largest-first,
+        where each community is a set of densely connected nodes.
+    """
+    a = []
+    for c1 in cliques(g):
+        if len(c1) >= k:
+            for c2 in a:
+                if len(c1 & c2) >= k - 1: # clique percolation
+                    c2.update(c1)
+            a.append(c1)
+    return reversed(sorted(a, key=len))
+
+def components(g):
+    """ Returns an iterator of components, largest-first,
+        where each component is a set of connected nodes.
+    """
+    n = set(itertools.chain(g, *g.values())) # all nodes
+    a = [set((n,)) | set(g.get(n, ())) for n in n]
+    for i in reversed(range(len(a))):
+        for j in reversed(range(i + 1, len(a))):
+            if a[i] & a[j]: # subsets intersect?
+                a[i].update(a[j])
+                a.pop(j)
+    return reversed(sorted(a, key=len))
+
+# g = {
+#     'a': {'b': 1}, # A -> B -> C   X
+#     'b': {'c': 1},
+#     'x': {}
+# }
+# print(list(components(g)))
+
+def nameddefaulttuple(name, fields, **default):
+    """ Returns a namedtuple with default values.
+    """
+    r = collections.namedtuple(name, fields)
+    r.__new__.__defaults__ = tuple(default[f] for f in fields if f in default)
+    return r
+
+# Point = nameddefaulttuple('Point', ('x', 'y', 'z'), z=0)
+
+class Edge(nameddefaulttuple('Edge', ('node1', 'node2', 'weight', 'type'), weight=1.0, type=None)):
+
+    __slots__ = () # disable __dict__ to save memory
+
+    # Algorithms for shortest paths and centrality
+    # use an adjacency matrix, i.e., {n1: {n2: w},
+    # where w is the weight of the edge n1 -> n2. 
+
+    # But we want {n1: n2: Edge}, so that an edge 
+    # can store other metadata besides its weight.
+    # We make Edge act as Edge.weight when used in
+    # arithmetic operations (x + Edge, x * Edge): 
+
+    __add__ = __radd__ = lambda e, x: x + e.weight
+    __sub__ = __rsub__ = lambda e, x: x - e.weight
+    __mul__ = __rmul__ = lambda e, x: x * e.weight
+    __div__ = __rdiv__ = lambda e, x: x / e.weight
+
+# e = Edge('Garfield', 'cat', weight=1.0, type='is-a')
+# 
+# print(e)
+# print(e.node1)
+# print(e.node2)
+# print(e.weight)
+# print(e.type)
+# print(e + 1)
+# print(e * 10)
+# 
+# n1, n2, w, _ = e
+# print(n1)
+# print(n2)
+
+class Graph(dict): # { node id1: { node id2: edge }}
+
+    def __init__(self, directed=False):
+        self._directed = directed
+
+    @property
+    def directed(self):
+        return self._directed
+
+    @property
+    def density(self):
+        n = len(list(self.nodes))
+        e = len(list(self.edges))
+        return float(self.directed + 1) * e / n / (n - 1) # 0.0-1.0
+
+    @property
+    def nodes(self):
+        """ Returns an iterator of nodes.
+        """
+        return iter(self)
+
+    @property
+    def edges(self):
+        """ Returns an iterator of edges,
+            each a named tuple (node1, node2, weight, type).
+        """
+        return iter(set(itertools.chain(*(e.values() for e in self.values()))))
+
+    def edge(self, n1, n2):
+        """ Returns the edge from node n1 to n2, or None.
+        """
+        return self.get(n1, {}).get(n2)
+
+    def incident(self, n):
+        """ Returns the edges to and from the given node.
+        """
+        a = set()
+        for n1, n2 in self.items():
+            if n == n1:
+                a.update(n2.values())
+            if n in n2:
+                a.add(n2[n])
+        return a
+
+    def adjacent(self, n):
+        """ Returns the nodes connected to the given node.
+        """
+        a = set()
+        for n1, n2 in self.items():
+            if n == n1:
+                a.update(n2.keys())
+            if n in n2:
+                a.add(n1)
+        return a
+
+    def degree(self, n):
+        return len(self.incident(n))
+
+    def copy(self):
+        g = self.__class__(directed=self._directed)
+        g.update(self)
+        return g
+
+    def update(self, g):
+        for n in g.nodes:
+            self.add(n)
+        for e in g.edges:
+            self.add(*e)
+        return self
+
+    def add(self, n1, n2=None, weight=1.0, type=None):
+        if n2 == None:
+            self.setdefault(n1, {})
+        if n2 != None:
+            self.setdefault(n1, {})
+            self.setdefault(n2, {})
+            self[n1][n2] = e = Edge(n1, n2, float(weight), type)
+        if n2 != None and not self._directed:
+            self[n2][n1] = e
+
+    def pop(self, n1, n2=None, default=None):
+        if n2 == None:
+            for n in self:
+                self[n].pop(n1, None)       # n1 <- ...
+            v = dict.pop(self, n1, default) # n1 -> ...
+        if n2 != None:
+            v = self.get(n1, {}).pop(n2, default)
+        if n2 != None and not self._directed:
+            v = self.get(n2, {}).pop(n1, default)
+        return v
+
+    def sub(self, nodes=[]):
+        """ Returns a graph with the given nodes, and connecting edges.
+        """
+        g = self.__class__(directed=self._directed)
+        for n in self.nodes:
+            if n in nodes:
+                g.add(n)
+        for e in self.edges:
+            if e.node1 in g and e.node2 in g:
+                g.add(*e)
+        return g
+
+    def nn(self, n, depth=1):
+        """ Returns a graph with node n (depth=0),
+            nodes connected to this node (depth=1), 
+            nodes connected to these nodes (depth=2), ...
+        """
+        g = self.__class__(directed=self._directed)
+        g.add(n)
+        for i in range(depth):
+            for e in [e for e in self.edges if not e in g and e.node1 in g or e.node2 in g]:
+                g.add(*e)
+        return g
+
+    def sp(self, n1, n2):
+        """ Returns the shortest path from n1 to n2.
+        """
+        return shortest_path(self, n1, n2)
+
+    def hops(self, n1, n2):
+        return len(self.sp(n1, n2)) - 2
+
+    def __contains__(self, v):
+        if isinstance(v, Edge):
+            return self.edge(v.node1, v.node2) is not None # XXX ignores weight & type
+        else:
+            return dict.__contains__(self, v)
+
+    def __or__(self, g):
+        return union(self, g)
+
+    def __and__(self, g):
+        return intersection(self, g)
+
+    def __sub__(self, g):
+        return difference(self, g)
+
+    def save(self, path):
+        # GraphML: http://graphml.graphdrawing.org
+        from xml.sax.saxutils import escape
+        s  = '<?xml version="1.0" encoding="utf-8"?>'
+        s += '\n<graphml>'
+        s += '\n<key for="edge" id="weight" attr.name="weight" attr.type="float"/>'
+        s += '\n<key for="edge" id="type" attr.name="type" attr.type="string"/>'
+        s += '\n<graph edgedefault="%sdirected">' % ('un', '')[self._directed]
+        for n in self.nodes:
+            s += '\n<node id="%s" />' % escape(n)
+        for e in self.edges:
+            s += '\n<edge source="%s" target="%s">' % (escape(e.node1), escape(e.node2))
+            s += '\n\t<data key="weight">%s</data>' % (e.weight)
+            s += '\n\t<data key="type">%s</data>'   % (e.type or '')
+            s += '\n</edge>'
+        s += '\n</graph>'
+        s += '\n</graphml>'
+        f = codecs.open(path, 'w', encoding='utf-8')
+        f.write(s)
+        f.close()
+
+    @classmethod
+    def load(cls, path):
+        t = ElementTree
+        t = t.parse(path)
+        t = t.find('graph')
+        d = t.get('edgedefault') == 'directed'
+        g = cls(directed=d)
+        for n in t.iter('node'): g.add(unescape(n.get('id')))
+        for e in t.iter('edge'): g.add(
+            unescape(e.get('source')), 
+            unescape(e.get('target')), 
+            e.findtext('*[@key="weight"]', 1.0),
+            e.findtext('*[@key="type"]') or None
+        )
+        return g
+
+def union(g1, g2):
+    # g1 | g2
+    g = g1.__class__(directed=g1.directed)
+    g.update(g1)
+    g.update(g2)
+    return g
+
+def intersection(g1, g2):
+    # g1 & g2
+    g = g1.__class__(directed=g1.directed)
+    for n in g1.nodes:
+        if n in g2 is True:
+            g.add(n)
+    for e in g1.edges:
+        if e in g2 is True:
+            g.add(*e)
+
+def difference(g1, g2):
+    # g1 - g2
+    g = g1.__class__(directed=g1.directed)
+    for n in g1.nodes:
+        if n in g2 is False:
+            g.add(n)
+    for e in g1.edges:
+        if e in g2 is False:
+            g.add(*e)
+
+# g = Graph(directed=False)
+# 
+# g.add('a', 'b', weight=1)  #     1       1       1       2    
+# g.add('b', 'c', weight=1)  # A <---> B <---> C <---> D <---> X
+# g.add('c', 'd', weight=1)  #   <--------------------------->  
+# g.add('a', 'x', weight=2)  #                 2                
+# g.add('d', 'x', weight=2)
+# g.add('o')
+# 
+# print(top(betweenness(g)))
+# 
+# print(top(pagerank(g)))
+# 
+# for n1, n2 in nwise(g.sp('d', 'a')):  # DCBA = 3, DXA = 4 
+#     print(n1, '->', n2)
+# 
+# # a has 2 connections:
+# for n in g.nn('a', 1):
+#     print(n)
+# 
+# # g has two disconnected subgraphs:
+# for g in map(g.sub, components(g)):
+#     print(list(g.nodes))
+
+def visualize(g, **kwargs):
+    """ Returns a string with a HTML5 <canvas> element,
+        that renders the given graph using a force-directed layout.
+    """
+    a = {}
+    for e in g.edges:
+        a.setdefault(e.node1, {})[e.node2] = e.weight
+
+    f = lambda k, v: json.dumps(kwargs.get(k, v))
+    s = '\n'.join((
+        '<canvas id=%(id)s width=%(width)s height=%(height)s></canvas>',
+        '<script src=%(src)s></script>',
+        '<script>',
+        '\tvar adjacency = %s;' % json.dumps(a),
+        '',
+        '\tvar canvas;',
+        '\tcanvas = document.getElementById(%(id)s);',
+        '\tcanvas.graph = new Graph(adjacency);',
+        '\tcanvas.graph.animate(canvas, %(n)s, {',
+        '\t\tdirected    : %s,' % f('directed', False),
+        '\t\tfont        : %s,' % f('font', '10px sans-serif'),
+        '\t\tfill        : %s,' % f('fill', '#fff'),
+        '\t\tstroke      : %s,' % f('stroke', '#000'),
+        '\t\tstrokewidth : %s,' % f('strokewidth', 0.5),
+        '\t\tradius      : %s,' % f('radius', 4.0),
+        '\t\tf1          : %s,' % f('f1', 10.0),
+        '\t\tf2          : %s,' % f('f2', 0.5),
+        '\t\tm           : %s'  % f('m', 0.25),
+        '\t});',
+        '</script>'
+    ))
+    k = {}
+    k.update({'src': 'graph.js', 'id': 'g', 'width': 640, 'height': 480, 'n': 1000})
+    k.update(kwargs)
+    k = {k: json.dumps(v) for k, v in k.items()}
+    return s % k
+
+# g = Graph()
+# n = range(200)
+# for i in range(200):
+#     g.add(
+#         n1=random.choice(n), 
+#         n2=random.choice(n))
+# 
+# f = open('test.html', 'w')
+# f.write(visualize(g, n=1000, directed=True))
+# f.close()
