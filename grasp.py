@@ -48,6 +48,7 @@ import sys
 import os
 import re
 import inspect
+import logging
 import traceback
 import threading
 import multiprocessing
@@ -75,7 +76,8 @@ import datetime
 import random
 import math
 
-from heapq import heappush, heappop
+from heapq import heappush
+from heapq import heappop
 
 try:
     # 3 decimal places (0.001)
@@ -84,11 +86,12 @@ except:
     pass
 
 PY2 = sys.version.startswith('2')
+PY3 = sys.version.startswith('3')
 
-if not PY2:
+if PY3:
     str, unicode, basestring = bytes, str, str
 
-if not PY2:
+if PY3:
     # Python 3.4+
     from html.parser import HTMLParser
     from html        import unescape
@@ -97,14 +100,14 @@ else:
     from HTMLParser  import HTMLParser
     unescape = HTMLParser().unescape
 
-if not PY2:
+if PY3:
     import http.server   as BaseHTTPServer
     import socketserver  as SocketServer
 else:
     import BaseHTTPServer
     import SocketServer
 
-if not PY2:
+if PY3:
     import urllib.request
     import urllib.parse as urlparse
     URLError, Request, urlopen, urlencode, urldecode, urlquote = (
@@ -266,6 +269,40 @@ def retry(exception, tries, f, *args, **kwargs):
 
 # Asynchronous + retry:
 # f = asynchronous(lambda x: retry(Exception, 2, addx, x), callback)
+
+##### ETC #########################################################################################
+
+#---- LOG -----------------------------------------------------------------------------------------
+# Functions that access the internet must report the visited URL using the standard logging module.
+# See also: https://docs.python.org/2/library/logging.html#logging.Formatter
+
+SIGNED = '%(asctime)s %(filename)s:%(lineno)s %(funcName)s: %(message)s' # 12:59:59 grasp.py#1000
+
+log = logging.getLogger(__name__)
+log.level = logging.DEBUG
+
+if not log.handlers:
+    log.handlers.append(logging.NullHandler())
+
+def debug(file=sys.stdout, format=SIGNED, date='%H:%M:%S'):
+    """ Writes the log to the given file-like object.
+    """
+    h1 = getattr(debug, '_handler', None)
+    h2 = file
+    if h1 in log.handlers:
+        log.handlers.remove(h1)
+    if hasattr(h2, 'write') and \
+       hasattr(h2, 'flush'):
+        h2 = logging.StreamHandler(h2)
+        h2.formatter = logging.Formatter(format, date)
+    if isinstance(h2, logging.Handler):
+        log.handlers.append(h2)
+        debug._handler = h2
+
+# debug()
+# debug(open(cd('log.txt'), 'a'))
+# request('https://textgain.com')
+# debug(False)
 
 ##### ETC #########################################################################################
 
@@ -1862,7 +1899,7 @@ def oauth(url, data={}, method='GET', key='', token='', secret=('','')):
 
 OAuth = collections.namedtuple('Oauth', ('key', 'token', 'secret'))
 
-#---- REQUESTS & STREAMS ---------------------------------------------------------------------------
+#---- REQUESTS & STREAMS --------------------------------------------------------------------------
 # The download(url) function returns the HTML (JSON, image data, ...) at the given url.
 # If this fails it will raise NotFound (404), Forbidden (403) or TooManyRequests (420).
 
@@ -1875,7 +1912,7 @@ def request(url, data={}, headers={}):
     """ Returns a file-like object to the given URL.
     """
     try:
-        return urlopen(Request(url, urlencode(data) if data else None, headers))
+        f = urlopen(Request(url, urlencode(data) if data else None, headers))
 
     except URLError as e:
         status = getattr(e, 'code', None) # HTTPError
@@ -1896,6 +1933,9 @@ def request(url, data={}, headers={}):
             raise Timeout
         else:
             raise e
+
+    log.info(url)
+    return f
 
 def download(url, data={}):
     """ Returns the content at the given URL.
