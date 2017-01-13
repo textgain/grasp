@@ -1884,7 +1884,7 @@ def oauth(url, data={}, method='GET', key='', token='', secret=('','')):
         s  = base64.b64encode(s)
         return s
 
-    data.update({
+    data = dict(data, **{
         'oauth_nonce'            : nonce(),
         'oauth_timestamp'        : timestamp(),
         'oauth_consumer_key'     : key,
@@ -1893,11 +1893,27 @@ def oauth(url, data={}, method='GET', key='', token='', secret=('','')):
         'oauth_version'          : '1.0',
     })
 
-    data['oauth_signature'] = sign(url.split('?')[0], data, method, secret)
+    data['oauth_signature'] = sign(url.split('?')[0], data, method.upper(), secret)
 
     return url, data
 
 OAuth = collections.namedtuple('Oauth', ('key', 'token', 'secret'))
+
+#---- SERIALIZATION -------------------------------------------------------------------------------
+
+def serialize(url='', data={}):
+    """ Returns a URL with a query string of the given data.
+    """
+    p = urlparse.urlsplit(url)
+    q = urlparse.parse_qsl(p.query)
+    q.extend((b(k), b(v)) for k, v in data.items())
+    q = urlencode(q, doseq=True)
+    p = p.scheme, p.netloc, p.path, q, p.fragment
+    s = urlparse.urlunsplit(p)
+    s = s.lstrip('?')
+    return s
+
+# print(serialize('http://www.google.com', {'q': 'cats'})) # http://www.google.com?q=cats
 
 #---- REQUESTS & STREAMS --------------------------------------------------------------------------
 # The download(url) function returns the HTML (JSON, image data, ...) at the given url.
@@ -1937,10 +1953,24 @@ def request(url, data={}, headers={}):
     log.info(url)
     return f
 
-def download(url, data={}):
-    """ Returns the content at the given URL.
+CACHE = cd('cache')
+
+def download(url, data={}, headers={}, cached=False):
+    """ Returns the content at the given URL, as a byte string.
     """
-    return request(url, data).read()
+    if not cached:
+        return request(url, data, headers).read()
+
+    k = hashlib.sha1(b(url)).hexdigest()[:16]
+    k = os.path.join(CACHE, '%s.txt' % k)
+
+    if not os.path.exists(CACHE):
+        os.makedirs(CACHE)
+    if not os.path.exists(k):
+        with open(k, 'wb') as f:
+            f.write(download(url, data, headers))
+
+    return open(k, 'rb').read()
 
 # print(u(download('http://textgain.com')))
 
@@ -1969,41 +1999,18 @@ class stream(list):
                 else:
                     raise e
 
-#---- CACHE ---------------------------------------------------------------------------------------
-# The cached() function caches the output of a given function in a file.
-# This is useful with download() for performance (cfr. a browser cache).
-
-CACHE = cd('_cache')
-
-def cached(f, *args, **kwargs):
-    """ Returns and caches the string value from f(*args, **kwargs).
-    """
-    k  = repr(f.__name__)
-    k += repr(f.__doc__)
-    k += repr(args) 
-    k += repr(kwargs)
-    k  = hashlib.sha1(b(k)).hexdigest()[:16]
-    k  = os.path.join(CACHE, '%s.txt' % k)
-
-    if not os.path.exists(CACHE):
-        os.makedirs(CACHE)
-    if not os.path.exists(k):
-        v = f(*args, **kwargs)
-        f = codecs.open(k, 'w', encoding='utf-8')
-        f.write(u(v))
-        f.close()
-
-    return codecs.open(k, encoding='utf-8').read()
-
-# print(u(cached(download, 'https://www.textgain.com/')))
-
 #---- SEARCH --------------------------------------------------------------------------------------
 # The Bing Search API grants 5,000 free requests per month.
 # The Google Search API grants 100 free requests per day.
 
+keys = {
+    'Bing'   : '4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yBP5o',
+    'Google' : 'AIzaSyBxe9jC4WLr-Rry_5OUMOZ7PCsEyWpiU48'
+}
+
 Result = collections.namedtuple('Result', ('url', 'text'))
 
-def bing(q, page=1, language='en', key='4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yBP5o'):
+def bing(q, page=1, language='en', cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples from Bing.
     """
     if 0 < page <= 100:
@@ -2016,9 +2023,9 @@ def bing(q, page=1, language='en', key='4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yB
         r %= (
             urlquote(b(q)),
             urlquote(b(language)), 1 + 10 * (page - 1))
-        k = base64.b64encode(b(':%s' % key))
-        r = request(r, headers={'Authorization': b'Basic ' + k})
-        r = json.loads(u(r.read()))
+        k = base64.b64encode(b(':%s' % (key or keys['Bing'])))
+        r = download(r, headers={'Authorization': b'Basic ' + k}, cached=cached)
+        r = json.loads(u(r))
 
         for r in r['d']['results']:
             yield Result(
@@ -2027,13 +2034,13 @@ def bing(q, page=1, language='en', key='4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yB
             )
             time.sleep(0.1)
 
-def google(q, page=1, language='en', key='AIzaSyBxe9jC4WLr-Rry_5OUMOZ7PCsEyWpiU48'):
+def google(q, page=1, language='en', cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples from Google.
     """
     if 0 < page <= 10:
         r  = 'https://www.googleapis.com/customsearch/v1'
         r += '?cx=000579440470800426354:_4qo2s0ijsi'
-        r += '&key=%s' % key
+        r += '&key=%s' % (key or keys['Google'])
         r += '&q=%s'
         r += '&lr=lang_%s'
         r += '&start=%i'
@@ -2042,8 +2049,8 @@ def google(q, page=1, language='en', key='AIzaSyBxe9jC4WLr-Rry_5OUMOZ7PCsEyWpiU4
         r %= (
             urlquote(b(q)),
             urlquote(b(language)), 1 + 10 * (page - 1))
-        r = request(r)
-        r = json.loads(u(r.read()))
+        r = download(r, cached=cached)
+        r = json.loads(u(r))
 
         for r in r['items']:
             yield Result(
@@ -2052,14 +2059,14 @@ def google(q, page=1, language='en', key='AIzaSyBxe9jC4WLr-Rry_5OUMOZ7PCsEyWpiU4
             )
             time.sleep(0.1)
 
-def search(q, engine='bing', page=1, language='en', key=None):
+def search(q, engine='bing', page=1, language='en', cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples.
     """
     f = globals().get(engine, lambda *args: None)
     if key:
-        return f(q, page, language, key)
+        return f(q, page, language, cached, key)
     else:
-        return f(q, page, language)
+        return f(q, page, language, cached)
 
 # for url, description in search('textgain'):
 #     print(url)
@@ -2076,7 +2083,7 @@ def search(q, engine='bing', page=1, language='en', key=None):
 # https://dev.twitter.com/docs/api/1.1
 # https://dev.twitter.com/streaming/overview/request-parameters
 
-TWITTER = OAuth(
+keys['Twitter'] = OAuth(
     'zinzNx4FFyLDQkOaTnR9zYRq7',
     '2365345020-snrMR8jQ69WDZ0KbSGvF1b4O7kIyynJp9v3UySL', (
     'VFlV2M9mimg8bZTTct9qVuOVdWvak5MmCfghtdB6B8SOQvINbL',
@@ -2086,20 +2093,6 @@ TWITTER = OAuth(
 Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'photo'))
 
 class Twitter(object):
-
-    def __init__(self, key=TWITTER.key, token=TWITTER.token, secret=TWITTER.secret):
-        self._key,     \
-        self._token,   \
-        self._secret = \
-            key, token, secret
-
-    def request(self, url, data):
-        url, data = oauth(url, data, 'GET', 
-            self._key, 
-            self._token, 
-            self._secret
-        )
-        return request(url + '?' + urlencode(data))
 
     def parse(self, v):
         t = Tweet(
@@ -2116,11 +2109,18 @@ class Twitter(object):
             t = t._replace(text=u('RT @%s: %s' % (RT['user']['screen_name'], RT['text'])))
         return t
 
-    def stream(self, q):
+    def stream(self, q, language='', key=None):
         """ Returns an iterator of tweets (live).
         """
-        r = 'https://stream.twitter.com/1.1/statuses/filter.json'
-        r = self.request(r, {'track': b(q)})
+        k = key or keys['Twitter']
+        r = 'https://stream.twitter.com/1.1/statuses/filter.json', {
+            'language': language,
+            'track'   : q
+        }
+        r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+        r = serialize(*r)
+        r = request(r)
+
         for v in stream(r):
             v = u(v)
             v = json.loads(v)
@@ -2128,15 +2128,24 @@ class Twitter(object):
             yield v
             time.sleep(1)
 
-    def search(self, q):
+    def search(self, q, language='', cached=False, key=None):
         """ Returns an iterator of tweets.
         """
         id = ''
         for i in range(10):
-            r = 'https://api.twitter.com/1.1/search/tweets.json'
-            r = self.request(r, {'q': b(q), 'max_id': id, 'count': 100})
-            r = json.loads(u(r.read()))
+            k = key or keys['Twitter']
+            r = 'https://api.twitter.com/1.1/search/tweets.json', {
+                'count' : 100,
+                'max_id': id,
+                'lang'  : language,
+                'q'     : q
+            }
+            r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+            r = serialize(*r)
+            r = download(r, cached=cached)
+            r = json.loads(u(r))
             r = r.get('statuses', [])
+
             for v in r:
                 yield self.parse(v)
                 time.sleep(0.05) # ~= 180 requests / 15 minutes
@@ -2145,19 +2154,27 @@ class Twitter(object):
             if len(r) < 100:
                 raise StopIteration
 
-    def follow(self, q):
+    def follow(self, q, cached=False, key=None):
         """ Returns an iterator of tweets for the given username.
         """
-        return self.search(u'from:' + q)
+        return self.search(u'from:' + q, '', cached, key)
 
-    def followers(self, q):
+    def followers(self, q, cached=False, key=None):
         """ Returns an iterator of followers for the given username.
         """
         id = -1
         while 1:
-            r = 'https://api.twitter.com/1.1/followers/list.json'
-            r = self.request(r, {'screen_name': b(q.strip('@')), 'cursor': id, 'count': 100})
-            r = json.loads(u(r.read()))
+            k = key or keys['Twitter']
+            r = 'https://api.twitter.com/1.1/followers/list.json', {
+                'count': 100,
+                'cursor': id,
+                'screen_name': q.lstrip('@')
+            }
+            r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+            r = serialize(*r)
+            r = download(r, cached=cached)
+            r = json.loads(u(r))
+
             for v in r.get('users', []):
                 yield v.get('screen_name')
                 time.sleep(0.5) # ~= 15 requests / 15 minutes
@@ -2166,15 +2183,15 @@ class Twitter(object):
             except:
                 raise StopIteration
 
-# t = Twitter()
+twitter = Twitter()
 
-# for tweet in t.search('kuffar'):
+# for tweet in twitter.search('cats', language='en'):
 #     print(tweet.text)
 
-# for tweet in t.stream('kuffar'):
+# for tweet in twitter.stream('cats'):
 #     print(tweet.text)
 
-# for username in t.followers('textgain'):
+# for username in twitter.followers('textgain'):
 #     print(username)
 
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
@@ -2189,7 +2206,7 @@ BIBLIOGRAPHY = set((
     '.noprint'        , # [citation needed]
 ))
 
-def wikipedia(q='', language='en'):
+def wikipedia(q='', language='en', cached=True):
     """ Returns the HTML source of the given Wikipedia article (or '').
     """
     time.sleep(1)
@@ -2198,8 +2215,9 @@ def wikipedia(q='', language='en'):
     r += '&format=json'
     r += '&redirects=1'
     r += '&page=%s' % urllib.quote(q)
-    r  = download(r)
-    r  = json.loads(r)
+    r  = download(r, cached=cached)
+    r  = json.loads(u(r))
+
     try:
         return u'<h1>%s</h1>\n%s' % (
             u(r['parse']['title']),
@@ -2276,9 +2294,9 @@ def atom(xml):
             u(e.findtext('author/name'      , ''))
         )
 
-def feed(url):
+def feed(url, cached=False):
     time.sleep(1)
-    s = download(url)
+    s = download(url, cached=cached)
     for f in (rss, atom):
         for r in f(s):
             yield r
@@ -2287,31 +2305,31 @@ def feed(url):
 #     print(story)
 
 #---- MAIL ----------------------------------------------------------------------------------------
-# The mail() function will send a HTML-formatted e-mail from textgain.live@gmail.com.
+# The mail() function sends a HTML-formatted e-mail from a Gmail account.
 
-EMAIL, PASSWORD, SMTP = \
-    'textgain.live@gmail.com', 'g4Z74a5vF6FHnuDx', 'smtp.gmail.com:465'
+SMTP = collections.namedtuple('SMTP', ('username', 'password', 'server'))
 
-def mail(to, subject, message):
+def mail(to, subject, message, relay=SMTP('', '', 'smtp.gmail.com:465')):
     """ Sends a HTML e-mail using SSL encryption.
     """
-
     from email.mime.multipart import MIMEMultipart
     from email.mime.text      import MIMEText
 
+    username, password, server = relay
+
     m = MIMEMultipart()
-    m['From'] = EMAIL
+    m['From'] = username
     m['To'] = to
     m['Subject'] = subject
     m.attach(MIMEText(b(message), 'html', 'utf-8')) # html/plain
     m = m.as_string()
 
-    s = smtplib.SMTP_SSL(SMTP) # SSL
-    s.login(EMAIL, PASSWORD)
-    s.sendmail(EMAIL, to, m)
+    s = smtplib.SMTP_SSL(server) # SSL
+    s.login(username, password)
+    s.sendmail(username, to, m)
     s.close()
 
-# mail('tom@textgain.com', 'test', u'<b>Héllø</b>')
+# mail('grasp@mailinator.com', 'test', u'<b>Héllø</b>')
 
 ###################################################################################################
 
