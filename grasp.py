@@ -401,6 +401,16 @@ class matrix(list):
             return list.__getitem__(self, i)[j]
         return list.__getitem__(self, i)
 
+    @property
+    def html(self):
+        a = ['<table>']
+        for r in self:
+            a.append('<tr>')
+            a.extend('<td>%s</td>' % v for v in r)
+            a.append('</tr>')
+        a.append('</table>')
+        return u'\n'.join(a)
+
 # m = matrix()
 # m.append([1, 2, 3])
 # m.append([4, 5, 6])
