@@ -71,6 +71,7 @@ import xml.etree.ElementTree as ElementTree
 import sqlite3 as sqlite
 import csv as csvlib
 import json
+import glob
 import time
 import datetime
 import random
@@ -291,8 +292,7 @@ def debug(file=sys.stdout, format=SIGNED, date='%H:%M:%S'):
     h2 = file
     if h1 in log.handlers:
         log.handlers.remove(h1)
-    if hasattr(h2, 'write') and \
-       hasattr(h2, 'flush'):
+    if hasattr(h2, 'write') and hasattr(h2, 'flush'):
         h2 = logging.StreamHandler(h2)
         h2.formatter = logging.Formatter(format, date)
     if isinstance(h2, logging.Handler):
@@ -318,7 +318,8 @@ def u(v, encoding='utf-8'):
     """
     if isinstance(v, str):
         for e in ((encoding,), ('windows-1252',), ('utf-8', 'ignore')):
-            try: return v.decode(*e)
+            try:
+                return v.decode(*e)
             except:
                 pass
         return v
@@ -331,7 +332,8 @@ def b(v, encoding='utf-8'):
     """
     if isinstance(v, unicode):
         for e in ((encoding,), ('windows-1252',), ('utf-8', 'ignore')):
-            try: return v.encode(*e)
+            try:
+                return v.encode(*e)
             except:
                 pass
         return v
@@ -349,8 +351,16 @@ def shuffled(a):
     for v in sorted(a, key=lambda v: random.random()):
         yield v
 
-def nwise(a, n=2):
+def chunks(a, n=2):
     """ Returns an iterator of tuples of n consecutive values.
+    """
+    return zip(*(a[i::n] for i in range(n)))
+
+# for v in chunks([1, 2, 3, 4], n=2): # (1, 2), (3, 4)
+#     print(v)
+
+def nwise(a, n=2):
+    """ Returns an iterator of tuples of n consecutive values (rolling).
     """
     a = itertools.tee(a, n)
     a =(itertools.islice(a, i, None) for i, a in enumerate(a))
@@ -358,7 +368,7 @@ def nwise(a, n=2):
     a = iter(a)
     return a
 
-# for v in nwise([1, 2, 3], n=2): # (1, 2), (2, 3)
+# for v in nwise([1, 2, 3, 4], n=2): # (1, 2), (2, 3), (3, 4)
 #     print(v)
 
 def choice(a, p=[]):
@@ -428,7 +438,7 @@ class CSV(matrix):
         """ Returns the given .csv file as a list of rows, each a list of values.
         """
         try:
-            self.name = name
+            self.name      = name
             self.separator = separator
             self._load()
         except IOError:
@@ -437,11 +447,10 @@ class CSV(matrix):
             self.extend(rows)
 
     def _load(self):
-        f = open(self.name, 'r')
-        f = csvlib.reader(f, delimiter=self.separator)
-        for r in f:
-            r = [u(v) for v in r]
-            self.append(r)
+        with open(self.name, 'r') as f:
+            for r in csvlib.reader(f, delimiter=self.separator):
+                r = [u(v) for v in r]
+                self.append(r)
 
     def save(self, name=''):
         a = []
@@ -452,6 +461,16 @@ class CSV(matrix):
         f = codecs.open(name or self.name, 'w', encoding='utf-8')
         f.write('\n'.join(a))
         f.close()
+
+    def update(self, rows=[], index=0):
+        """ Appends the rows that have no duplicates in the given column(s).
+        """
+        u = set(map(repr, self[:,index])) # unique + hashable slices (slow)
+        for r in rows:
+            k = repr(r[index])
+            if k not in u:
+                self.append(r)
+                u.add(k)
 
     def clear(self):
         list.__init__(self, [])
@@ -603,9 +622,11 @@ def SELECT(table, *fields, **where):
     """
 
     def op(v):
+        if isinstance(v, basestring) and re.search(r'^<=|>=', v): # '<10'
+            return v[:2], v[2:]
         if isinstance(v, basestring) and re.search(r'^<|>', v): # '<10'
-            return v[0], v[1:]
-        if isinstance(v, basestring) and re.search(r'\*'  , v): # '*ly'
+            return v[:1], v[1:]
+        if isinstance(v, basestring) and re.search(r'\*', v): # '*ly'
             return 'like', v.replace('*', '%')
         if hasattr(v, '__iter__'):
             return 'in', v
@@ -726,25 +747,31 @@ def pw_ok(s1, s2):
 ##### ML ##########################################################################################
 
 #---- MODEL --------------------------------------------------------------------------------------
-# The Model base class is inherited by Perceptron, KNN, ...
+# The Model base class is inherited by Perceptron, Bayes, ...
 
 class Model(object):
 
-    def __init__(self, examples=[]):
+    def __init__(self, examples=[], **kwargs):
         self.labels = {}
 
     def train(self, v, label=None):
-        pass
+        raise NotImplementedError
 
     def predict(self, v):
-        pass
-
-    def save(self, path):
         raise NotImplementedError
+
+    def save(self, f):
+        json.dump(self.__dict__, f)
 
     @classmethod
-    def load(cls, path):
-        raise NotImplementedError
+    def load(cls, f):
+        self = cls()
+        for k, v in json.load(f).items():
+            try:
+                getattr(self, k).update(v) # defaultdict?
+            except:
+                setattr(self, k, v)
+        return self
 
 #---- PERCEPTRON ----------------------------------------------------------------------------------
 # The Perceptron or single-layer neural network is a supervised machine learning algorithm.
@@ -817,17 +844,17 @@ def top(p):
 
 class Perceptron(Model):
 
-    def __init__(self, examples=[], n=10):
+    def __init__(self, examples=[], n=10, **kwargs):
         """ Single-layer averaged perceptron learning algorithm.
         """
         # {label: count}
         # {label: {feature: (weight, weight sum, timestamp)}}
-        self.labels = \
-            collections.defaultdict(int)
-        self.weights, self._t, self._p = (
-            collections.defaultdict(lambda: 
-            collections.defaultdict(lambda: [0, 0, 0])), 1, iavg(0)
-        )
+        self.labels  = collections.defaultdict(int)
+        self.weights = collections.defaultdict(dict)
+
+        self._t = 1
+        self._p = iavg(0)
+
         for i in range(n):
             for v, label in shuffled(examples):
                 self.train(v, label)
@@ -838,7 +865,7 @@ class Perceptron(Model):
             # Accumulate average weights (prevents overfitting).
             # Keep running sum + time when sum was last updated.
             # http://www.ciml.info/dl/v0_8/ciml-v0_8-ch03.pdf
-            w = self.weights[label][f]
+            w = self.weights[label].setdefault(f, [0, 0, 0])
             w[0] += i
             w[1] += w[0] * (t - w[2])
             w[2]  = t
@@ -858,7 +885,7 @@ class Perceptron(Model):
     def predict(self, v, normalize=True):
         """ Returns a dict of (label, probability)-items.
         """
-        p = dict.fromkeys(self.labels, 0)
+        p = dict.fromkeys(self.labels, 0.0)
         t = float(self._t)
         for label, features in self.weights.items():
             n = 0
@@ -875,33 +902,64 @@ class Perceptron(Model):
             p = softmax(p, a=(self._p[0] + self._p[1]))
         return p
 
-    def save(self, path):
-        f = open(path, 'w')
-        json.dump({
-            'labels'  : self.labels,
-            'weights' : self.weights, 
-                  't' : self._t, 
-                  'p' : self._p}, f)
-
-    @classmethod
-    def load(cls, path):
-        f = open(path, 'r')
-        r = json.load(f)
-        m = cls()
-        m.labels.update(r['labels'])
-        m.weights.update(r['weights'])
-        m._t = r['t']
-        m._p = r['p']
-        return m
-
 # p = Perceptron(examples=[
 #     (('woof', 'bark'), 'dog'),
 #     (('meow', 'purr'), 'cat')], n=10)
 # 
 # print(p.predict(('meow',)))
 # 
-# p.save(cd('model.json'))
-# p = Perceptron.load(cd('model.json'))
+# p.save(open('model.json', 'w'))
+# p = Perceptron.load(open('model.json'))
+
+#---- NAIVE BAYES ---------------------------------------------------------------------------------
+# The Naive Bayes model is a simple alternative for Perceptron (it trains very fast).
+# It is based on the likelihood that a given feature occurs with a given label.
+
+# The probability that something big and bad is a wolf is: 
+# p(big|wolf) * p(bad|wolf) * p(wolf) / (p(big) * p(bad)). 
+
+# So it depends on the frequency of big wolves, bad wolves,
+# other wolves, other big things, and other bad things.
+
+class Bayes(Model):
+    
+    def __init__(self, examples=[], **kwargs):
+        """ Binomial Naive Bayes learning algorithm.
+        """
+        # {label: count}
+        # {label: {feature: count}}
+        self.labels  = collections.defaultdict(int)
+        self.weights = collections.defaultdict(dict)
+
+        for v, label in examples:
+                self.train(v, label)
+
+    def train(self, v, label=None):
+        for f in v:
+            try:
+                self.weights[label][f] += 1
+            except KeyError:
+                self.weights[label][f]  = 1 + 0.1 # smoothing
+        self.labels[label] += 1
+
+    def predict(self, v):
+        """ Returns a dict of (label, probability)-items.
+        """
+        p = dict.fromkeys(self.labels, 0.0)
+        for x in self.labels:
+            n =  self.labels[x]
+            w = (self.weights[x].get(f, 0.1) / n for f in v)
+            w = map(math.log, w) # prevent underflow
+            w = sum(w)
+            w = math.exp(w) 
+            w = w * n 
+            w = w / sum(self.labels.values())
+            p[x] = w
+
+        s = sum(p.values()) or 1
+        for label in p:
+            p[label] /= s
+        return p
 
 #---- FEATURES ------------------------------------------------------------------------------------
 # Character 3-grams are sequences of 3 successive characters: 'hello' => 'hel', 'ell', 'llo'.
@@ -915,38 +973,43 @@ def chngrams(s, n=3):
     for i in range(len(s) - n + 1):
         yield s[i:i+n] # 'hello' => 'hel', 'ell', 'llo'
 
-def ngrams(s, n=3):
+def ngrams(s, n=2):
     """ Returns an iterator of word n-grams.
     """
-    return chngrams(re.split(r'\s+', s), n)
+    for w in chngrams([w for w in re.split(r'\s+', s) if w], n):
+        yield tuple(w)
 
-def v(s): # (vector)
-    """ Returns a set of character trigrams in the given string,
-        removing hashtags (#), anonymizing links and usernames.
+def v(s, features=('ch3',)): # (vector)
+    """ Returns a set of character trigrams in the given string.
         Can be used as Perceptron.train(v(s)) or predict(v(s)).
     """
-    s = s.lower()
-    s = s.replace('#', '')
+   #s = s.lower()
     s = re.sub(r'(https?://[^\s]+)', 'http://', s)
-    s = re.sub(r'(@[a-z0-9_./]+)', '@username', s)
-    v = {}
-    v.update(chngrams(s, n=3))
-   #v.update(chngrams(s, n=5))
+    s = re.sub(r'(@[\w.]+)', '@me', s, flags=re.U)
+    v = collections.Counter()
+    v[''] = 1 # bias
+    for f in features:
+        if f[0] == 'c': # 'c1' (punctuation, diacritics)
+            v.update(chngrams(s, n=int(f[-1])))
+        if f[0] == 'w': # 'w1'
+            v.update(  ngrams(s, n=int(f[-1])))
     return v
 
+vec = v
+
 # data = []
-# for id, username, tweet, date in csv(cd('hate.csv')):
-#     data.append((v(tweet), 'hate'))
-# for id, username, tweet, date in csv(cd('safe.csv')):
-#     data.append((v(tweet), 'safe'))
+# for id, username, tweet, date in csv(cd('spam.csv')):
+#     data.append((v(tweet), 'spam'))
+# for id, username, tweet, date in csv(cd('real.csv')):
+#     data.append((v(tweet), 'real'))
 # 
 # p = Perceptron(examples=data, n=10)
-# p.save(cd('hate-model.json'))
+# p.save(open('spam-model.json', 'w'))
 # 
-# print(p.predict(v('die in your rage kuffar!'))) # {'safe': 0.15, 'hate': 0.85}
+# print(p.predict(v('Be Lazy and Earn $3000 per Week'))) # {'real': 0.15, 'spam': 0.85}
 
 #---- FEATURE SELECTION ---------------------------------------------------------------------------
-# Feature selection selects the best features by evaluating their statistical significance.
+# Feature selection identifies the best features, by evaluating their statistical significance.
 
 def pp(data=[]): # (posterior probability)
     """ Returns a {feature: {label: frequency}} dict
@@ -982,19 +1045,27 @@ def fsel(data=[]): # (feature selection, using chi2)
     for v, label in data:
         for f in v:
             f2[f] += 1
-            f3[f, label] += 1 / f1[label]
+            f3[f, label] += 1
     for f in f2:
-        p[f] = chi2([[f1[label] - f3[f, label] or 1e-10 for label in f1],
-                     [            f3[f, label] or 1e-10 for label in f1]])[1]
+        p[f] = chi2([[f1[label] - f3[f, label] or 0.1 for label in f1],
+                     [            f3[f, label] or 0.1 for label in f1]])[1]
     return p
+
+def topn(p, n=10, reverse=False):
+    """ Returns an iterator of (key, value)-tuples
+        ordered by the highest values in the dict.
+    """
+    for k in sorted(p, key=p.get, reverse=not reverse)[:n]:
+        yield k, p[k]
 
 # data = [
 #     (set(('yawn', 'meow')), 'cat'),
-#     (set(('yawn',       )), 'dog')]
+#     (set(('yawn',       )), 'dog')] * 10
 # 
 # bias = pp(data)
+# 
 # for f, p in fsel(data).items():
-#     if p > 0.995:
+#     if p < 0.01:
 #         print(f)
 #         print(top(bias[f]))
 #         # 'meow' is significant (always predicts 'cat')
@@ -1021,6 +1092,8 @@ def confusion_matrix(model, test=[]):
     # { label: { predicted label: count}}
     m = collections.defaultdict(lambda: \
         collections.defaultdict(int))
+    for label in model.labels:
+        m[label]
     for v, label in test:
         guess, p = top(model.predict(v))
         m[label][guess] += 1
@@ -1031,12 +1104,16 @@ def test(model, target, data=[]):
         High precision = few false positives for target label.
         High recall    = few false negatives for target label.
     """
-    m  = confusion_matrix(model, data)
+    if isinstance(model, Model):
+        m = confusion_matrix(model, data)
+    if isinstance(model, dict): # confusion matrix
+        m = model
+
     TP = 0.0
     TN = 0.0
     FP = 0.0
     FN = 0.0
-    for x1 in model.labels:
+    for x1 in m:
         for x2, n in m[x1].items():
             if target == x1 == x2:
                 TP += n
@@ -1050,48 +1127,54 @@ def test(model, target, data=[]):
         TP / (TP + FP or 1),
         TP / (TP + FN or 1))
 
-def kfoldcv(Model, data=[], k=10, weighted=False, verbose=False, **kwargs):
+def kfoldcv(Model, data=[], k=10, weighted=False, debug=False, **kwargs):
     """ Returns the average precision & recall across labels, in k tests.
     """
 
-    def chunks(a, n=10):
-      # chunks([1,2,3,4], n=2) => [[1,2], [3,4]]
-        return [a[i::n] for i in range(n)]
+    def folds(a, k=10):
+      # folds([1,2,3,4,5,6], k=2) => [1,2,3], [4,5,6]
+        return (a[i::k] for i in range(k))
 
-    def avg(a):
-      # avg([(1, 0.33), (2, 0.33), (3, 0.33)]) => 2   (weighted mean)
+    def wavg(a):
+      # wavg([(1, 0.33), (2, 0.33), (3, 0.33)]) => 2  (weighted mean)
         return sum(v * w for v, w in a) / (sum(w for v, w in a) or 1)
 
     data = list(shuffled(data))
-    data = chunks(data, k)
+    data = list(folds(data, k))
 
     P = []
     R = []
     for i in range(k):
-        a = data[i]
-        b = data[:i] + data[i+1:]
-        b = itertools.chain(*b)
-        m = Model(examples=b, **kwargs)
+        x = data[i]
+        y = data[:i] + data[i+1:]
+        y = itertools.chain(*y)
+        m = Model(examples=y, **kwargs)
+        f = confusion_matrix(m, test=x)
         for label, n in m.labels.items():
             if not weighted:
                 n = 1
-            precision, recall = test(m, target=label, data=a)
+            precision, recall = test(f, target=label)
             P.append((precision, n))
             R.append((recall, n))
 
-            if verbose:
+            if debug:
                 # k 1 P 0.99 R 0.99 spam
                 print('k %i' % (i+1), 'P %.2f' % precision, 'R %.2f' % recall, label)
 
-    return avg(P), avg(R)
+    return wavg(P), wavg(R)
+
+def F1(P, R):
+    """ Returns the harmonic mean of precision and recall.
+    """
+    return 2.0 * P * R / (P + R or 1)
 
 # data = []
-# for id, username, tweet, date in csv(cd('hate.csv')):
-#     data.append((v(tweet), 'hate'))
-# for id, username, tweet, date in csv(cd('safe.csv')):
-#     data.append((v(tweet), 'safe'))
+# for id, username, tweet, date in csv(cd('spam.csv')):
+#     data.append((v(tweet), 'spam'))
+# for id, username, tweet, date in csv(cd('real.csv')):
+#     data.append((v(tweet), 'real'))
 # 
-# print(kfoldcv(Perceptron, data, k=3, n=5, verbose=True)) # ~ P 0.80 R 0.80
+# print(kfoldcv(Perceptron, data, k=3, n=5, debug=True)) # ~ P 0.80 R 0.80
 
 #---- CONFIDENCE ----------------------------------------------------------------------------------
 # Predicted labels usually come with a probability or confidence score.
@@ -1155,7 +1238,7 @@ class calibrate(Model):
         """
         self._model = model
         self._label = label
-        # isotonic regression
+        # Isotonic regression:
         y = ((model.predict(v)[label], label == x) for v, x in data)
         y = sorted(y) # monotonic
         y = zip(*y)
@@ -1167,7 +1250,7 @@ class calibrate(Model):
         y = [0] + y + [1]
         f = {}
         i = 0
-        # linear interpolation
+        # Linear interpolation:
         for p in range(100 + 1):
             p *= 0.01
             while x[i] < p:
@@ -1181,6 +1264,13 @@ class calibrate(Model):
         p = self._model.predict(v)[self._label]
         p = self._f[round(p, 2)]
         return p
+
+    def save(self, f):
+        raise NotImplementedError
+    
+    @classmethod
+    def load(cls, f):
+        raise NotImplementedError
 
 # data = []
 # for review, polarity in csv('reviews-assorted1000.csv'):
@@ -1375,6 +1465,7 @@ def readability(s):
     s = s.lower()
     s = s.strip()
     s = s.strip('.!?()\'"')
+    s = re.sub(r'[\-/]+', ' ', s)
     s = re.sub(r'[\s,]+', ' ', s)
     s = re.sub(r'[.!?]+', '.', s)
     s = re.sub(r'(\. )+', '. ',s)
@@ -1382,7 +1473,8 @@ def readability(s):
     w = max(1, len(s.split(' '))) # words
     s = max(1, len(s.split('.'))) # sentences
     r = 1.599 * sum(n == 1 for n in y) * 100 / w - 1.015 * w / s - 31.517
-    r = 0.01 * r
+    r = 0.01 * r 
+    r = w == 1 and 1.0 or r
     r = max(r, 0.0)
     r = min(r, 1.0)
     return r
@@ -1424,13 +1516,14 @@ def deflood(s, n=3):
 def decamel(s, separator="_"):
     """ Returns the string with CamelCase converted to underscores.
     """
-    s = re.sub(r'([a-z0-9])([A-Z])', '\\1%s\\2' % separator, s)
-    s = re.sub(r'(.)([A-Z][a-z]+)', '\\1%s\\2' % separator, s)
-    s = re.sub(r'-', '_', s)
+    s = re.sub(r'(.)([A-Z][a-z]{2,})', '\\1%s\\2' % separator, s)
+    s = re.sub(r'([a-z0-9])([A-Z])'  , '\\1%s\\2' % separator, s)
+    s = re.sub(r'([A-Za-z])([0-9])'  , '\\1%s\\2' % separator, s)
+    s = re.sub(r'-', separator, s)
     s = s.lower()
     return s
 
-# print(decamel('HTTP404Response-Error')) # http404_response_error
+# print decamel('HTTPError404NotFound') # http_error_404_not_found
 
 def sg(w, language='en', known={'aunties': 'auntie'}):
     """ Returns the singular of the given plural noun.
@@ -1438,6 +1531,8 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
     if w in known: 
         return known[w]
     if language == 'en':
+        if re.search(r'(?i)ss|[^s]sis|[^mnotr]us$', w     ):  # ± 93%
+            return w
         for pl, sg in (                                       # ± 98% accurate (CELEX)
           (r'          ^(son|brother|father)s-', '\\1-'   ),
           (r'      ^(daughter|sister|mother)s-', '\\1-'   ),
@@ -1479,73 +1574,105 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
 # The tokenize() function identifies tokens (= words, symbols) and sentence breaks in a string.
 # The task involves handling abbreviations, contractions, hyphenation, emoticons, URLs, ...
 
+EMOJI = set((
+    u'😊', u'☺️', u'😉', u'😌', u'😏', u'😎', u'😍', u'😘', u'😴', u'😀', u'😃', u'😄', u'😅', 
+    u'😇', u'😂', u'😭', u'😢', u'😱', u'😳', u'😜', u'😛', u'😁', u'😐', u'😕', u'😧', u'😦', 
+    u'😒', u'😞', u'😔', u'😫', u'😩', u'😠', u'😡', u'🙊', u'🙈', u'💔', u'❤️', u'💕', u'♥', 
+    u'👌', u'✌️', u'👍', u'🙏'
+))
+
+EMOTICON = set((
+    ':-D', '8-D', ':D', '8)', '8-)',
+    ':-)', '(-:', ':)', '(:', ':-]', ':=]', ':-))',
+    ':-(', ')-:', ':(', '):', ':((', ":'(", ":'-(",
+    ':-P', ':-p', ':P', ':p', ';-p',
+    ':-O', ':-o', ':O', ':o', '8-o'
+    ';-)', ';-D', ';)', '<3'
+))
+
 abbreviations = {
-    'en': set(('a.m.', 'art.', 'cf.', 'e.g.', 'etc.', 'i.e.', 'p.m.', 'prof.', 'vs.', 'w/'))
+    'en': set(('a.m.', 'cf.', 'e.g.', 'etc.', 'i.e.', 'p.m.', 'vs.', 'w/', 'Dr.', 'Mr.'))
 }
 
 contractions = {
     'en': set(("'d", "'m", "'s", "'ll", "'re", "'ve", "n't"))
 }
 
+for c in contractions.values():
+    c |= set(s.replace("'", u'’') for s in c) # n’t
+
+_RE_EMO1 = '|'.join(re.escape(' '+' '.join(s)) for s in EMOTICON | EMOJI).replace(r'\-\ ', '\- ?')
+_RE_EMO2 = '|'.join(re.escape(     ''.join(s)) for s in EMOTICON | EMOJI)
+
 def tokenize(s, language='en', known=[]):
     """ Returns the string with punctuation marks split from words , 
         and sentences separated by newlines.
     """
+    p = u'….¡¿?!:;,/(){}[]\'`‘’"“”„&–—'
+    p = re.compile(r'([%s])' % re.escape(p))
+    f = re.sub
 
-    def sentences(s):
-        for s in re.split(r'\n+', s):
-            s = s.strip()
-            s = re.sub(r'([.?!]+)([A-Z])', '\\1 \\2', s)             # Hello?Hello
-            for w in re.split(r'\s+', s):
-                w = tokens(w)
-                if re.search(u'\s[.?!]+(\s[\'"”’])?$', w):           # " Hello . "
-                    yield w + '\n'
-                else:
-                    yield w + ' '
-            yield '\n'
+    # Find tokens w/ punctuation (URLs, numbers, ...)
+    w  = set(known)
+    w |= set(re.findall(r'https?://.*?(?:\s|$)', s))                      # http://...
+    w |= set(re.findall(r'(?:\s|^)((?:[A-Z]\.)+[A-Z]\.?)', s))            # U.S.
+    w |= set(re.findall(r'(?:\s|^)([A-Z]\. )(?=[A-Z])', s))               # J. R. R. Tolkien
+    w |= set(re.findall(r'(\d+[\.,:/″][\d\%]+)', s))                      # 1.23
+    w |= set(re.findall(r'(\w+\.(?:doc|html|jpg|pdf|txt|zip))', s, re.U)) # cat.jpg
+    w |= abbreviations.get(language, set())                               # etc.
+    w |=  contractions.get(language, set())                               # 're
+    w  = '|'.join(f(p, r' \\\1 ', w).replace('  ', ' ') for w in w)
+    e1 = _RE_EMO1
+    e2 = _RE_EMO2
 
-    def tokens(w):
-        if w in known:
-            return w
-        if w in abbreviations.get(language, ()):                     # e.g.
-            return w
-        if w.startswith('('):                                        # (http://
-            return '( ' + tokens(w[1:])
-        if re.search(r'^https?://', w):                              # http://
-            return w
-        if re.search(r'[^:;-][),:]$', w):                            # U.S.,
-            return tokens(w[:-1]) + ' ' + w[-1]
-        if re.search(r'^([A-Za-z]\.)+$', w):                         # U.S.
-            return w
-        if re.search(r'^[A-Za-z]\.$', w):                            # T. De Smedt
-            return w
-        if re.search(r'^[A-Z][bcdfghjklmnpqrstvwxz]+\.$', w):        # Mr., Dr.
-            return w
-        if re.search(r'^[@#][0-9a-zA-z_]+$', w):                     # @name, #tag
-            return w
-        if w.endswith('...'):                                        # hello...
-            return tokens(w.rstrip('.')) + ' ...'
-        if w.endswith(('.', '?', '!')):                              # hello!
-            return tokens(w[:-1]) + ' ' + w[-1]
-        if w.endswith(("'", '"', u'”', u'’')):                       # 'ello!'
-            return tokens(w[:-1]) + ' ' + w[-1]
-        for x in contractions.get(language, ()):                     # we're
-            if w.endswith(x):
-                return tokens(w[:-len(x)]) + ' ' + x
-        w = re.sub(u'([,;:!?/|(){}\[\]\'`"“”‘’+=])', ' \\1 ', w)     # "hello,"
-        w = re.sub(r'([:;])\s+(\-?)\s+([()DOoPp])', '\\1\\2\\3', w)  # :-)
-        w = re.sub(u'(😊|😌|😏|😎|😀|😃|😄|😅|😂|😜|😛|😁|😐|😧|😦|😒|😞|😔|😫|😩|😠|😡|❤️|♥)', ' \\1 ', w)
-        w = re.sub(r'\s+', ' ', w)
-        w = w.strip()
-        return w
+    # Split punctuation:
+    s = f(p, ' \\1 ', s)
+    s = f(r'\t', ' ', s)
+    s = f(r' +', ' ', s)
+    s = f(r'\. (?=\.)', '.', s)                                           #  ...
+    s = f(r'(\(|\[) (\.+) (\]|\))', '\\1\\2\\3', s)                       # (...)
+    s = f(r'(\(|\[) (\d+) (\]|\))', '\\1\\2\\3', s)                       # [1]
+    s = f(r'(^| )(p?p) \. (?=\d)', '\\1\\2. ', s)                         # p.1
+    s = f(r'(?<=\d)(mb|gb|kg|km|m|ft|h|hrs|am|pm) ', ' \\1 ', s)          # 5ft
+    s = f(u'(^|\s)($|£|€)(?=\d)', '\\1\\2 ', s)                           # $10
+    s = f(r'& (#\d+|[A-Za-z]+) ;', '&\\1;', s)                            # &amp; &#38;
+    s = f(w , lambda m: ' %s ' % m.group().replace(' ', ''), s)           # e.g. 1.2
+    s = f(w , lambda m: ' %s ' % m.group().replace(' ', ''), s)           # U.K.'s
+    s = f(e1, lambda m: ' %s ' % m.group().replace(' ', ''), s)           # :-)
+    s = f(r'(https?://.*?)([.?!,)])(?=\s|$)', '\\1 \\2', s)               # (http://)
+    s = f(r'(https?://.*?)([.?!,)])(?=\s|$)', '\\1 \\2', s)               # (http://),
+    s = f(r'www \. (.*?) \. (?=[a-z])', 'www.\\1.', s)                    # www.goo.gl
+    s = f(r' \. (com?|net|org|be|cn|de|fr|nl|ru|uk)(?=\s|$)', '.\\1', s)  # google.com
+    s = f(r'(\w+) \. (?=\w+@\w+\.(?=com|net|org))', ' \\1.', s)           # a.bc@gmail
+    s = f(r'(-)\n([a-z]\w+(?:\s|$))', '\\2\n', s, re.U)                   # be-\ncause
+    s = f(r' +', ' ', s)
 
-    return ''.join(sentences(s)).strip()
+    # Split sentences:
+    s = f(r'\r+', '\n', s)
+    s = f(r'\n+', '\n', s)
+    s = f(u' ([….?!]) (?!=[….?!])', ' \\1\n', s)                          # .\n
+    s = f(u'\n([’”)]) ', ' \\1\n', s)                                     # “Wow.”
+    s = f(r'\n(((%s) ?)+) ' % e2, ' \\1\n', s)                            #  Wow! :-)
+    s = f(r' (%s) (?=[A-Z])' % e2, ' \\1\n', s)                           #  Wow :-) The
+    s = f(r' (etc\.) (?=[A-Z])', ' \\1\n', s)                             # etc. The
+    s = f(r'\n, ', ' , ', s)                                              # Aha!, I said
+    s = f(r' +', ' ', s)
+    s = s.split('\n')
 
-# s = u"RT @user: Check it out... https://www.textgain.com #Textgain cat.jpg"
+    # Balance quotes:
+    for i in range(len(s)-1):
+        j = i + 1
+        if s[j].startswith(('" ', "' ")) and \
+           s[j].count(s[j][0]) % 2 == 1  and \
+           s[i].count(s[j][0]) % 2 == 1:
+            s[i] += ' ' + s[j][0]
+            s[j] = s[j][2:]
+
+    return '\n'.join(s).strip()
+
+# s = u"RT @user: Check it out... 😎 (https://www.textgain.com) #Textgain cat.jpg"
 # s = u"There's a sentence on each line, each a space-separated string of tokens (i.e., words). :)"
-# s = u"Title\nA sentence.Another sentence. ‘A citation.’ By T. De Smedt. 😎"
-#
-# print(tokenize(s))
+# s = u"Title\nA sentence.Another sentence. ‘A citation.’ By T. De Smedt."
 
 def wc(s):
     """ Returns a (word, count)-dict, lowercase.
@@ -1578,26 +1705,26 @@ def ctx(*w):
         i -= m
         if i == 0:
             v.add(' ')                       # bias
-            v.add('C %+d %s' % (i, w[:+1]))  # capitalization
+            v.add('1 %+d %s' % (i, w[:+1]))  # capitalization
             v.add('* %+d %s' % (i, w[-6:]))  # token
             v.add('^ %+d %s' % (i, w[:+3]))  # token head
             v.add('$ %+d %s' % (i, w[-3:]))  # token suffix
         else:
             v.add('$ %+d %s' % (i, w[-3:]))  # token suffix left/right
-            v.add('p %+d %s' % (i, tag   ))
+            v.add('? %+d %s' % (i, tag   ))  # token tag
     return v
 
 # print(ctx(['The', 'DET'], ['cat', 'NOUN'], ['sat', 'VERB'])) # context of 'cat'
 #
 # set([
-#     'x-1 The' , 
-#     't-1 DET' , 
-#     'b'       , 
-#     'h+0 c'   , 
-#     'w+0 cat' , 
-#     'x+0 cat' , 
-#     'x+1 sat' , 
-#     't+1 VERB', 
+#     ' '        , 
+#     '$ -1 The' , 
+#     '? -1 DET' , 
+#     '1 +0 c'   , 
+#     '* +0 cat' , 
+#     '^ +0 cat' , 
+#     '$ +1 sat' , 
+#     '? +1 VERB', 
 # ])
 
 @printable
@@ -1625,9 +1752,10 @@ class Sentence(list):
 # for w, tag in Sentence(s):
 #     print(w, tag)
 
-TAGGER = {
-    'en' : Perceptron.load(cd('en.json'))
-}
+TAGGER = {} # {'en': Model}
+
+for f in glob.glob(cd('*-pos.json')):
+    TAGGER[f.split('/')[-1][:2]] = Perceptron.load(open(f))
 
 def tag(s, language='en'):
     """ Returns the tokenized + tagged string.
@@ -1640,6 +1768,7 @@ def parse(s, language='en'):
     """
     model = TAGGER[language]
     s = tokenize(s)
+    s = s.replace('/', '\\/')
     s = s.split('\n')
     for s in s:
         a = Sentence()
@@ -1654,30 +1783,44 @@ def parse(s, language='en'):
 # for s in parse("We're all mad here. I'm mad. You're mad."):
 #     print(repr(s))
 
-PTB = {       # Penn Treebank tagset                                         # EN
-    u'NOUN' : ('NN', 'NNS', 'NNP', 'NNPS', 'NP'),                            # 30%
-    u'VERB' : ('VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'MD'),               # 14%
-    u'PUNC' : ('LS', 'SYM', '.', ',', ':', '(', ')', '``', "''", '#', '$'),  # 11%
-    u'PREP' : ('IN', 'PP'),                                                  # 10%
-    u'DET'  : ('DT', 'PDT', 'WDT', 'EX'),                                    #  9%
-    u'ADJ'  : ('JJ', 'JJR', 'JJS'),                                          #  7%
-    u'ADV'  : ('RB', 'RBR', 'RBS', 'WRB'),                                   #  4%
-    u'NUM'  : ('CD', 'NO'),                                                  #  4%
-    u'PRON' : ('PR', 'PRP', 'PRP$', 'WP', 'WP$'),                            #  3%
-    u'CONJ' : ('CC', 'CJ'),                                                  #  2%
-    u'X'    : ('FW',),                                                       #  2%
-    u'PRT'  : ('POS', 'PT', 'RP', 'TO'),                                     #  2%
-    u'INTJ' : ('UH',),                                                       #  1%
+PTB = {           # Penn Treebank tagset                                           # EN
+    u'NOUN' : set(('NN', 'NNS', 'NNP', 'NNPS', 'NP')),                             # 30%
+    u'VERB' : set(('VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'MD')),                # 14%
+    u'PUNC' : set(('LS', 'SYM', '.', ',', ':', '(', ')', '``', "''", '$', '#')),   # 11%
+    u'PREP' : set(('IN', 'PP')),                                                   # 10%
+    u'DET'  : set(('DT', 'PDT', 'WDT', 'EX')),                                     #  9%
+    u'ADJ'  : set(('JJ', 'JJR', 'JJS')),                                           #  7%
+    u'ADV'  : set(('RB', 'RBR', 'RBS', 'WRB')),                                    #  4%
+    u'NUM'  : set(('CD', 'NO')),                                                   #  4%
+    u'PRON' : set(('PR', 'PRP', 'PRP$', 'WP', 'WP$')),                             #  3%
+    u'CONJ' : set(('CC', 'CJ')),                                                   #  2%
+    u'X'    : set(('FW',)),                                                        #  2%
+    u'PRT'  : set(('POS', 'PT', 'RP', 'TO')),                                      #  2%
+    u'INTJ' : set(('UH',)),                                                        #  1%
 }
 
-def universal(w, tag, tagset=PTB):
-    """ Returns a simplified tag (e.g., NOUN) for the given Penn Treebank tag (e.g, NNPS).
+WEB = dict(PTB, **{
+    u'NOUN' : set(('NN', 'NNS', 'NP')),                                            # 14%
+    u'NAME' : set(('NNP', 'NNPS', '@')),                                           # 11%
+    u'PRON' : set(('PR', 'PRP', 'PRP$', 'WP', 'WP$', 'PR|MD', 'PR|VB', 'WP|VB')),  #  9%
+    u'URL'  : set(('URL',)),                       # 'youve'  'thats'  'whats'     #  1%
+    u':)'   : set((':)',)),                                                        #  1%
+    u'#'    : set(('#',)),                                                         #  1%
+})
+WEB['PUNC'].remove('#')
+WEB['PUNC'].add('RT')
+
+def universal(w, tag, tagset=WEB):
+    """ Returns a simplified tag (e.g., NOUN) for the given Penn Treebank tag (e.g, NNS).
     """
+    tag = tag.split('-')[0]
     tag = tag.split('|')[0]
     tag = tag.split('&')[0]
-    for u, tags in tagset.items():
-        if tag in tags:
-            return w, u
+    if tag == w == '#':
+        return w, 'PUNC' # != hashtag
+    for k in tagset:
+        if tag in tagset[k]:
+            return w, k
     return w, tag
 
 # print(universal('rabbits', 'NNS'))
@@ -1697,17 +1840,15 @@ def universal(w, tag, tagset=PTB):
 # for s in corpus:
 #     for w in nwise(Sentence('  %s  ' % s), n=5):
 #         w = [universal(*w) for w in w]
-#         if not w[2][1]:
-#             print w
 #         data.append((ctx(*w), w[2][1]))
 # 
 # print('%s sentences' % len(corpus))
 # print('%s tokens'    % len(data))
 # 
-# print(kfoldcv(Perceptron, data, k=3, n=5, weighted=True, verbose=True)) # 0.96 0.96
+# print(kfoldcv(Perceptron, data, k=3, n=5, weighted=True, debug=True)) # 0.96 0.96
 # 
 # en = Perceptron(data, n=5)
-# en.save(cd('en.json'))
+# en.save(open('en.json', 'w'))
 # 
 # print(tag('What a great day! I love it.'))
 
@@ -1720,6 +1861,7 @@ def universal(w, tag, tagset=PTB):
 # A VP (verb phrase) is a verb + preceding auxillary verbs (e.g., 'might be doing'). 
 
 TAG = set((
+    'NAME' ,
     'NOUN' ,
     'VERB' ,
     'PUNC' ,
@@ -1732,7 +1874,10 @@ TAG = set((
     'CONJ' ,
     'X'    ,
     'PRT'  ,
-    'INTJ'
+    'INTJ' ,
+    'URL'  ,
+    ':)'   ,
+    '#'
 ))
 
 inflections = {
@@ -1827,8 +1972,8 @@ def chunked(sentence, language='en'):
         or PP (prepositional phrase).
     """
     if language in ('de', 'en', 'nl'): # Germanic
-        P = (('NP', 'DET|PRON? NUM* (ADV|ADJ+ CONJ|, ADV|ADJ)* ADV|ADJ* -ing/VERB* NOUN+'),
-             ('NP', 'NOUN DET NOUN'),
+        P = (('NP', 'DET|PRON? NUM* (ADV|ADJ+ CONJ|, ADV|ADJ)* ADV|ADJ* -ing/VERB* NOUN|NAME+'),
+             ('NP', 'NOUN|NAME DET NOUN|NAME'),
              ('NP', 'PRON'),
              ('AP', '(ADV|ADJ+ CONJ|, ADV|ADJ)* ADV* ADJ+'),
              ('VP', 'PRT|ADV* VERB+ ADV?'),
@@ -1854,6 +1999,109 @@ def chunked(sentence, language='en'):
 # s = tag('The black cat is dozing lazily on the couch.')
 # for ch, s in chunked(s):
 #     print(ch, u(s))
+
+#---- WORDNET -------------------------------------------------------------------------------------
+# WordNet is a free lexical database of synonym sets, and relations between synonym sets.
+
+SYNSET = r'^\d{8} \d{2} \w .. ((?:.+? . )+?)\d{3} ((?:..? \d{8} \w .... )*)(.*?)\| (.*)$'
+# '05194874 07 n 02 grip 0 grasp 0 001 @ 05194151 n 0000 | an intellectual understanding'
+#  https://wordnet.princeton.edu/wordnet/man/wndb.5WN.html#sect3
+
+POINTER = {
+    'antonym'  : '!',  # 
+    'hypernym' : '@',  # grape -> fruit
+    'hyponym'  : '~',  # grape -> muscadine
+    'holonym'  : '#',  # grape -> grapevine
+    'meronym'  : '%',  # grape -> wine
+}
+
+class Wordnet(dict):
+
+    def __init__(self, path='WordNet-3.0'):
+        """ Opens the WordNet database from the given path 
+            (that contains dict/index.noun, dict/data.noun, ...)
+        """
+        self._f = {} # {'n': <open file 'dict/index.noun'>}
+
+        for k, v in (('n', 'noun'), ('v', 'verb'), ('a', 'adj' ), ('r', 'adv' )):
+
+            f = cd(path, 'dict',  'data.%s' % v)
+            f = open(f, 'rb')
+            self._f[k] = f
+
+            f = cd(path, 'dict', 'index.%s' % v)
+            f = open(f, 'r')
+            for s in f:
+                if not s.startswith(' '):
+                    s = s.strip()
+                    s = s.split(' ')
+                    p = s[-int(s[2]):]
+                    w = s[0]
+                    w = w.replace('_', ' ')
+                    self[w, k] = p # {('grasp', 'n'): (offset1, ...)}
+            f.close()
+
+    def synset(self, offset, pos='n'):
+        f = self._f[pos]
+        f.seek(int(offset))
+        s = f.readline()
+        s = s.strip()
+        s = s.decode('utf-8')
+        m = re.match(SYNSET, s)
+        w = m.group(1)
+        p = m.group(2)
+        g = m.group(4)
+        p = tuple(chunks(p.split(' '), n=4))  # (pointer, offset, pos, source/target)
+        w = tuple(chunks(w.split(' '), n=2))  # (word, sense)
+        w = tuple(w.replace('_', ' ') for w, i in w)
+
+        return Synset(offset, pos, lemma=w, pointers=p, gloss=g, factory=self.synset)
+
+    def synsets(self, w, pos='n'):
+        """ Returns a tuple of senses for the given word,
+            where each sense is a Synset (= synonym set).
+        """
+        w = w.lower()
+        w = w, pos
+        return tuple(self.synset(offset, pos) for offset in self.get(w, ()))
+
+    def __call__(self, *args, **kwargs):
+        return self.synsets(*args, **kwargs)
+
+class Synset(tuple):
+
+    def __new__ (self, offset, pos, lemma, pointers=[], gloss='', factory=None):
+        return tuple.__new__(self, lemma)
+
+    def __init__(self, offset, pos, lemma, pointers=[], gloss='', factory=None):
+        """ A set of synonyms, with semantic relations and a definition (gloss).
+        """
+        self.synset   = factory
+        self.offset   = offset
+        self.pos      = pos
+        self.pointers = pointers
+        self.gloss    = gloss
+
+    @property
+    def id(self):
+        return '%s-%s' % (self.offset, self.pos)
+
+    # Synset.hypernyms, .hyponyms, ...
+    def __getattr__(self, k):
+        v = POINTER[k.replace('_', ' ')[:-1]] # -s
+        v = tuple(self.synset(p[1], p[2]) for p in self.pointers if p[0].startswith(v))
+        setattr(self, k, v) # lazy
+        return v
+
+    def __repr__(self):
+        return 'Synset(%s)' % tuple.__repr__(self)
+
+# wn = Wordnet(path='WordNet-3.0')
+# for s in wn.synsets('grasp', pos='n'):
+#     print(s)
+#     print(s.gloss)
+#     print(s.hyponyms)
+#     print()
 
 ##### WWW #########################################################################################
 
@@ -1980,7 +2228,8 @@ def download(url, data={}, headers={}, cached=False):
         with open(k, 'wb') as f:
             f.write(download(url, data, headers))
 
-    return open(k, 'rb').read()
+    with open(k, 'rb') as f:
+        return f.read()
 
 # print(u(download('http://textgain.com')))
 
@@ -2082,6 +2331,28 @@ def search(q, engine='bing', page=1, language='en', cached=False, key=None):
 #     print(url)
 #     print(description)
 #     print('\n')
+
+#---- TRANSLATE -----------------------------------------------------------------------------------
+
+def translate(q, source='', target='en', cached=False, key=None):
+    """ Returns the translated string.
+    """
+    r  = 'https://www.googleapis.com/language/translate/v2?'
+    r +=('&source=%s' % source) if source else ''
+    r += '&target=%s' % target
+    r += '&key=%s'    % key
+    r += '&q=%s'      % urlquote(b(q[:1000]))
+    r  = download(r, cached=cached)
+    r  = json.loads(u(r))
+    r  = r.get('data', {})
+    r  = r.get('translations', [{}])[0]
+    r  = r.get('translatedText', '')
+    return r
+
+setattr(google, 'search'   , search   )
+setattr(google, 'translate', translate)
+
+# print(google.translate('De zwarte kat zat op de mat.', source='nl', key='***'))
 
 #---- TWITTER -------------------------------------------------------------------------------------
 # Using u(), oauth(), request() and stream() we can define a Twitter class.
@@ -2193,9 +2464,12 @@ class Twitter(object):
             except:
                 raise StopIteration
 
+    def __call__(self, *args, **kwargs):
+        return self.search(*args, **kwargs)
+
 twitter = Twitter()
 
-# for tweet in twitter.search('cats', language='en'):
+# for tweet in twitter('cats', language='en'):
 #     print(tweet.text)
 
 # for tweet in twitter.stream('cats'):
