@@ -12,3 +12,5 @@ The code is currently in one .py file. Almost done.The work shall be divided int
  * Network Analysis: graph centrality and visualization.
 ## Version
 3.4+
+## License
+BSD
