@@ -246,7 +246,7 @@ def scheduled(interval=MINUTE):
 # @scheduled(1)
 # @atomic
 # def update():
-#     print("updating...")
+#     print('updating...')
 
 def retry(exception, tries, f, *args, **kwargs):
     """ Returns the value of f(*args, **kwargs).
@@ -549,7 +549,7 @@ class Database(object):
         self.connection = sqlite.connect(name, timeout)
         self.connection.row_factory = factory
         if schema:
-            for q in schema.split(";"):
+            for q in schema.split(';'):
                 self(q, commit=False)
             self.commit()
 
@@ -1587,7 +1587,9 @@ EMOTICON = set((
     ':-(', ')-:', ':(', '):', ':((', ":'(", ":'-(",
     ':-P', ':-p', ':P', ':p', ';-p',
     ':-O', ':-o', ':O', ':o', '8-o'
-    ';-)', ';-D', ';)', '<3'
+    ';-)', ';-D', ';)',
+    ':-S', ':-s',
+    '<3'
 ))
 
 abbreviations = {
@@ -1626,7 +1628,7 @@ def tokenize(s, language='en', known=[]):
     e2 = _RE_EMO2
 
     # Split punctuation:
-    s = f(p, ' \\1 ', s)
+    s = f(p, ' \\1 ', s) + ' '
     s = f(r'\t', ' ', s)
     s = f(r' +', ' ', s)
     s = f(r'\. (?=\.)', '.', s)                                           #  ...
@@ -1644,7 +1646,7 @@ def tokenize(s, language='en', known=[]):
     s = f(r'www \. (.*?) \. (?=[a-z])', 'www.\\1.', s)                    # www.goo.gl
     s = f(r' \. (com?|net|org|be|cn|de|fr|nl|ru|uk)(?=\s|$)', '.\\1', s)  # google.com
     s = f(r'(\w+) \. (?=\w+@\w+\.(?=com|net|org))', ' \\1.', s)           # a.bc@gmail
-    s = f(r'(-)\n([a-z]\w+(?:\s|$))', '\\2\n', s, re.U)                   # be-\ncause
+    s = f(r'(?<=[a-z])(-)\n([a-z]+(?:\s|$))', '\\2\n', s, re.U)           # be-\ncause
     s = f(r' +', ' ', s)
 
     # Split sentences:
@@ -1652,6 +1654,7 @@ def tokenize(s, language='en', known=[]):
     s = f(r'\n+', '\n', s)
     s = f(u' ([….?!]) (?!=[….?!])', ' \\1\n', s)                          # .\n
     s = f(u'\n([’”)]) ', ' \\1\n', s)                                     # “Wow.”
+    s = f(r'\n((#\w+) ?) ', ' \\1\n', s)                                  #  Wow! #nice
     s = f(r'\n(((%s) ?)+) ' % e2, ' \\1\n', s)                            #  Wow! :-)
     s = f(r' (%s) (?=[A-Z])' % e2, ' \\1\n', s)                           #  Wow :-) The
     s = f(r' (etc\.) (?=[A-Z])', ' \\1\n', s)                             # etc. The
@@ -1853,10 +1856,10 @@ def universal(w, tag, tagset=WEB):
 # print(tag('What a great day! I love it.'))
 
 #---- PART-OF-SPEECH SEARCH -----------------------------------------------------------------------
-# The search() function yields parts of a part-of-speech-tagged sentence that match given pattern.
-# For example, 'ADJ* NOUN' yields all nouns in a sentence and optionally the preceding adjectives.
+# The chunk() function yields parts of a part-of-speech-tagged sentence that match a given pattern.
+# For example, 'ADJ* NOUN' yields all nouns in a sentence, and optionally the preceding adjectives.
 
-# The chunked() function yields NP, VP, AP and PP phrases.
+# The constituents() function yields NP, VP, AP and PP phrases.
 # A NP (noun phrase) is a noun + preceding determiners and adjectives (e.g., 'the big black cat').
 # A VP (verb phrase) is a verb + preceding auxillary verbs (e.g., 'might be doing'). 
 
@@ -1887,22 +1890,34 @@ inflections = {
 }
 
 class Phrase(Sentence):
-    pass
 
-def search(pattern, sentence, replace=[]):
+    def __repr__(self):
+        return 'Phrase(%s)' % repr(u(self))
+
+_RE_TAG = '|'.join(map(re.escape, TAG)) # NAME|NOUN|\:\)|...
+
+def chunk(pattern, sentence, replace=[]):
     """ Yields an iterator of matching Phrase objects from the given Sentence.
         The search pattern is a sequence of tokens (talk-, -ing), tags (VERB),
-        token/tags (-ing/VERB), and control characters:
+        token/tags (-ing/VERB), escaped characters (:\)), control characters: 
+        - ^ $ begin/end
         - ( ) group
         -  |  options: NOUN|PRON CONJ|,
         -  *  0+ tags: NOUN*
         -  +  1+ tags: NOUN+
         -  ?  <2 tags: NOUN?
     """
+    def is_tag(w):
+        return any(re.match(w+'$', t) for t in TAG) # r'AD[JV]'
+    def is_tags(w):
+        return all(is_tag(w) for w in w.split('|')) # 'ADJ|ADV'
+
     R = r'(?<!\\)' # = not preceded by \
-    s = re.sub(r'\s+', ' ', pattern)
-    s = re.sub(r' ([*+?]) ', ' -\\1 ', s)
-    s = re.sub(R+r'([()^$])', ' \\1 ', s)
+    s = ' %s ' % pattern
+    s = re.sub(r'\s+', ' ', s)
+    s = re.sub(R+r'([\^])' , ' \\1 ', s)
+    s = re.sub( r' ([*+?])(?=[ $])', ' -\\1', s)
+    s = re.sub(R+r'([()$])', ' \\1 ', s)
     s = s.strip()
     p = []
 
@@ -1916,29 +1931,32 @@ def search(pattern, sentence, replace=[]):
             w = w.replace(k.upper(), v)
 
         try:
-            w, x, _ = re.split(R+r'([*+?])$', w)     # ['ADJ|-ing', '+']
+            w, x, _ = re.split(R+r'([*+?])$', w)            # ['ADJ|-ing', '+']
         except ValueError:
             x = ''
-        if not re.search(R+r'/', w):
-            a = re.split(R+r'\|', w)                 # ['ADJ', '-ing']
+        if not re.search(R+r'\/', w):
+            a = re.split(R+r'\|', w)                        # ['ADJ', '-ing']
             for i, w in enumerate(a):
-                if w in TAG:
-                    a[i] = r'(?:\S+/%s)' % w         # '(?:\S+/ADJ)'
+                if is_tag(w):
+                    a[i] = r'(?:\S+/%s)' % w                # '(?:\S+/ADJ)'
                 else:
-                    a[i] = r'(?:%s/[A-Z]{1,4})' % w  #             '(?:-ing/[A-Z]{1,4})'
-            w = '|'.join(a)                          # '(?:\S+/ADJ)|(?:-ing/[A-Z]{1,4})'
+                    a[i] = r'(?:%s/(?:%s))' % (w, _RE_TAG)  # '(?:-ing/[A-Z]+)'
+            w = '|'.join(a)                                 # '(?:\S+/ADJ)|(?:-ing/[A-Z]+)'
+        elif is_tags(w.split('/')[-1]):
+            w = re.sub(R+r'/(?!.*/)', ')/(?:', w)           # '(?:-ing)/(?:VERB|ADJ)'
         else:
-            w = re.sub(R+r'/', ')/(?:', w)           # '(?:-ing)/(?:VERB|ADJ)'
+            w = '%s/(?:%s)' % (w, _RE_TAG)
 
         w = '(?:%s)' % w
-        w = '(?:%s )%s' % (w, x)                     # '(?:(?:-ing/[A-Z]{1,4}) )+'
-        w = re.sub(r'\(\?:-', r'(?:\S*', w)          #     '\S*ing/[A-Z]{1,4}'
-        w = re.sub(R+r'-/', r'\S*/', w)
+        w = '(?:%s )%s' % (w, x)                            # '(?:(?:-ing/[A-Z]+) )+'
+        w = re.sub(r'\(\?:-', r'(?:\S*', w)                 #     '\S*ing/[A-Z]+'
+        w = re.sub(r'\(\?:(\S*)-/', r'(?:\\b\1\S*', w)
+        w = re.sub(r'\/', '\\\/', w)
         p.append(w)
 
     p = '(%s)' % ''.join(p)
     for m in re.finditer(p, '%s ' % sentence, re.I):
-        m = ((m or '').strip() for m in m.groups())
+        m = (m.strip() for m in m.groups() if m)
         m = map(Phrase, m)
         m = tuple(m)
         if len(m) > 1:
@@ -1947,31 +1965,31 @@ def search(pattern, sentence, replace=[]):
             yield m[0]
 
 # for m in \
-#  search('ADJ', 
+#   chunk('ADJ', 
 #     tag('A big, black cat.')):
 #      print(u(m))
 
 # for m, g1, g2 in \
-#  search('DET? (NOUN) AUX? BE (-ry)', 
+#   chunk('DET? (NOUN) AUX? BE (-ry)', 
 #     tag("The cats'll be hungry.")): 
 #     print(u(g1), u(g2))
 
 # for m, g1, g2 in \
-#  search('DET? (NOUN) AUX? BE (-ry)', 
+#   chunk('DET? (NOUN) AUX? BE (-ry)', 
 #     tag("The boss'll be angry!")):
 #     print(u(g1), u(g2))
 
 # for m, g1, g2, g3 in \
-#  search('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
+#   chunk('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
 #     tag("Cats are more stubborn than dogs.")):
 #     print(u(g1), u(g2), u(g3))
 
-def chunked(sentence, language='en'):
-    """ Yields an iterator of (tag, Phrase)-tuples from the given Sentence,
+def constituents(sentence, language='en'):
+    """ Yields an iterator of (Phrase, tag)-tuples from the given Sentence,
         with tags NP (noun phrase), VP (verb phrase), AP (adjective phrase)
         or PP (prepositional phrase).
     """
-    if language in ('de', 'en', 'nl'): # Germanic
+    if language in ('da', 'de', 'en', 'nl', 'no', 'sv'): # Germanic
         P = (('NP', 'DET|PRON? NUM* (ADV|ADJ+ CONJ|, ADV|ADJ)* ADV|ADJ* -ing/VERB* NOUN|NAME+'),
              ('NP', 'NOUN|NAME DET NOUN|NAME'),
              ('NP', 'PRON'),
@@ -1985,7 +2003,7 @@ def chunked(sentence, language='en'):
     while s:
         for tag, p in P:
             try:
-                m = next(search('^(%s)' % p, s))[0]; break
+                m = next(chunk('^(%s)' % p, s))[0]; break
             except StopIteration:
                 m = ''
         if not m:
@@ -1994,11 +2012,27 @@ def chunked(sentence, language='en'):
             break
         s = s[len(u(m)):]
         s = s.strip()
-        yield tag, m
+        yield m, tag
 
-# s = tag('The black cat is dozing lazily on the couch.')
-# for ch, s in chunked(s):
-#     print(ch, u(s))
+phrases = constituents
+
+# s = parse('The black cat is dozing lazily on the couch.')
+# for phrase, tag in constituents(next(s)):
+#     print(tag, u(phrase))
+
+def head(phrase, tag='NP', language='en'):
+    """ Returns the head-word in the given phrase (naive).
+    """
+    if language in ('da', 'de', 'en', 'nl', 'no', 'sv') and tag == 'NP' or tag == 'VP':
+        phrase = reversed(phrase) # cat fight <=> combat de chats
+    for w, pos in phrase:
+        if pos == 'NOUN' and tag == 'NP' \
+        or pos == 'VERB' and tag == 'VP' \
+        or pos ==  'ADJ' and tag == 'AP':
+            return w
+
+# print(head(Phrase('cat/NOUN fight/NOUN')))
+# print(head(Phrase('combat/NOUN de/PREP chats/NOUN'), language='fr'))
 
 #---- WORDNET -------------------------------------------------------------------------------------
 # WordNet is a free lexical database of synonym sets, and relations between synonym sets.
@@ -2015,7 +2049,7 @@ POINTER = {
     'meronym'  : '%',  # grape -> wine
 }
 
-class Wordnet(dict):
+class WordNet(dict):
 
     def __init__(self, path='WordNet-3.0'):
         """ Opens the WordNet database from the given path 
@@ -2067,6 +2101,8 @@ class Wordnet(dict):
 
     def __call__(self, *args, **kwargs):
         return self.synsets(*args, **kwargs)
+
+Wordnet = WordNet
 
 class Synset(tuple):
 
