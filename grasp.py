@@ -1886,7 +1886,8 @@ TAG = set((
 inflections = {
     'aux'  : r"can|shall|will|may|must|could|should|would|might|'ll|'d",
     'be'   : r"be|am|are|is|was|were|being|been|'m|'re|'s",
-    'have' : r"have|has|had|having|'ve"
+    'have' : r"have|has|had|having|'ve",
+    'do'   : r"do|does|did|doing"
 }
 
 class Phrase(Sentence):
@@ -1908,16 +1909,14 @@ def chunk(pattern, sentence, replace=[]):
         -  ?  <2 tags: NOUN?
     """
     def is_tag(w):
-        return any(re.match(w+'$', t) for t in TAG) # r'AD[JV]'
+        return any(re.match(w+'$', t) for t in TAG)         # 'AD[JV]'
     def is_tags(w):
-        return all(is_tag(w) for w in w.split('|')) # 'ADJ|ADV'
+        return all(is_tag(w) for w in w.split('|'))         # 'ADJ|ADV'
 
-    R = r'(?<!\\)' # = not preceded by \
-    s = ' %s ' % pattern
-    s = re.sub(r'\s+', ' ', s)
-    s = re.sub(R+r'([\^])' , ' \\1 ', s)
-    s = re.sub( r' ([*+?])(?=[ $])', ' -\\1', s)
-    s = re.sub(R+r'([()$])', ' \\1 ', s)
+    s = re.sub(r'\s+', ' ', ' %s ' % pattern)
+    s = re.sub(r'(?<!\\)([\^])' , ' \\1 ', s)               # '^ADJ' => '^ ADJ'
+    s = re.sub(r' ([*+?])(?=[ $])', ' -\\1', s)             # ':) ?' => ':) -?'
+    s = re.sub(r'(?<!\\)([()$])', ' \\1 ', s)               # 'ADJ$' => 'ADJ $'
     s = s.strip()
     p = []
 
@@ -1928,14 +1927,14 @@ def chunk(pattern, sentence, replace=[]):
         for k, v in replace:
             w = w.replace(k.upper(), v)
         for k, v in inflections.items():
-            w = w.replace(k.upper(), v)
+            w = w.replace(k.upper(), v)                     # 'BE' => 'be|am|are|is'
 
         try:
-            w, x, _ = re.split(R+r'([*+?])$', w)            # ['ADJ|-ing', '+']
+            w, x, _ = re.split(r'(?<!\\)([*+?])$', w)       # ['ADJ|-ing', '+']
         except ValueError:
             x = ''
-        if not re.search(R+r'\/', w):
-            a = re.split(R+r'\|', w)                        # ['ADJ', '-ing']
+        if not re.search(r'(?<!\\)\/', w):
+            a = re.split(r'(?<!\\)\|', w)                   # ['ADJ', '-ing']
             for i, w in enumerate(a):
                 if is_tag(w):
                     a[i] = r'(?:\S+/%s)' % w                # '(?:\S+/ADJ)'
@@ -1943,9 +1942,9 @@ def chunk(pattern, sentence, replace=[]):
                     a[i] = r'(?:%s/(?:%s))' % (w, _RE_TAG)  # '(?:-ing/[A-Z]+)'
             w = '|'.join(a)                                 # '(?:\S+/ADJ)|(?:-ing/[A-Z]+)'
         elif is_tags(w.split('/')[-1]):
-            w = re.sub(R+r'/(?!.*/)', ')/(?:', w)           # '(?:-ing)/(?:VERB|ADJ)'
+            w = re.sub(r'(?<!\\)/(?!.*/)', ')/(?:', w)      # '(?:-ing)/(?:VERB|ADJ)'
         else:
-            w = '%s/(?:%s)' % (w, _RE_TAG)
+            w = '%s/(?:%s)' % (w, _RE_TAG)                  # '(?:1\/2)/[A-Z]+'
 
         w = '(?:%s)' % w
         w = '(?:%s )%s' % (w, x)                            # '(?:(?:-ing/[A-Z]+) )+'
@@ -2596,30 +2595,35 @@ def rss(xml):
     for e in t.iter('item'):
         yield Story(
             u(e.findtext('link'             , '')),
-            u(e.findtext('description'      , '')),
+            u(e.findtext('title'            , '')),
             u(e.findtext('pubDate'          , '')),
             u(t.findtext('channel/language' , '')).split('-')[0],
             u(e.findtext('author'           , ''))
         )
 
-def atom(xml):
+def atom(xml, ns='http://www.w3.org/2005/Atom'):
     """ Returns an iterator of stories from the given XML string (Atom feed).
     """
     t = ElementTree.fromstring(b(xml))
-    for e in t.iter('entry'):
+    for e in t.iter('{%s}entry' % ns):
         yield Story(
-            u(e.findtext('link'             , '')),
-            u(e.findtext('summary'          , '')),
-            u(e.findtext('updated'          , '')), u'',
-            u(e.findtext('author/name'      , ''))
+            u(e.findtext('{%s}link'     % ns, '')),
+            u(e.findtext('{%s}title'    % ns, '')),
+            u(e.findtext('{%s}updated'  % ns, '')), u'',
+            u(t.findtext('{%s}name'     % ns, ''))
         )
 
-def feed(url, cached=False):
+def feed(url, cached=False, headers={'User-Agent': 'Grasp.py'}):
     time.sleep(1)
-    s = download(url, cached=cached)
+    s = download(url, cached=cached, headers=headers)
     for f in (rss, atom):
-        for r in f(s):
-            yield r
+        try:
+            for r in f(s):
+                yield r
+        except ElementTree.ParseError as e: # HTML?
+            pass
+        except:
+            pass
 
 # for story in feed('http://feeds.washingtonpost.com/rss/world'):
 #     print(story)
