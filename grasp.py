@@ -434,12 +434,13 @@ class matrix(list):
 
 class CSV(matrix):
 
-    def __init__(self, name='', separator=',', rows=[]):
+    def __init__(self, name='', separator=',', rows=[], dtype = u):
         """ Returns the given .csv file as a list of rows, each a list of values.
         """
         try:
             self.name      = name
             self.separator = separator
+            self.dtype = dtype
             self._load()
         except IOError:
             pass # doesn't exist (yet)
@@ -449,7 +450,7 @@ class CSV(matrix):
     def _load(self):
         with open(self.name, 'r') as f:
             for r in csvlib.reader(f, delimiter=self.separator):
-                r = [u(v) for v in r]
+                r = [self.dtype(v) for v in r]
                 self.append(r)
 
     def save(self, name=''):
