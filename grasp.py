@@ -57,7 +57,7 @@ import itertools
 import collections
 import unicodedata
 import codecs
-import socket; socket.setdefaulttimeout(30)
+import socket; socket.setdefaulttimeout(10)
 import wsgiref
 import wsgiref.simple_server
 import urllib
@@ -94,27 +94,37 @@ if PY3:
 
 if PY3:
     # Python 3.4+
-    from html.parser import HTMLParser
-    from html        import unescape
+    import collections.abc
 else:
     # Python 2.7
-    from HTMLParser  import HTMLParser
+    collections.abc = collections
+
+if PY3:
+    from html.parser import HTMLParser
+    from html import unescape
+else:
+    from HTMLParser import HTMLParser
     unescape = HTMLParser().unescape
 
 if PY3:
-    import http.server   as BaseHTTPServer
-    import socketserver  as SocketServer
+    import http.server as BaseHTTPServer
+    import socketserver as SocketServer
 else:
     import BaseHTTPServer
     import SocketServer
 
 if PY3:
-    import urllib.request
+    import http.cookiejar as cookielib
+else:
+    import cookielib
+
+if PY3:
+    import urllib.request as urllib2
     import urllib.parse as urlparse
     URLError, Request, urlopen, urlencode, urldecode, urlquote = (
         urllib.error.URLError,
-        urllib.request.Request,
-        urllib.request.urlopen,
+        urllib2.Request,
+        urllib2.urlopen,
         urllib.parse.urlencode,
         urllib.parse.unquote,
         urllib.parse.quote
@@ -155,6 +165,22 @@ REGEX = type(re.compile(''))
 # isinstance(re.compile(''), REGEX)
 
 ##### ETC #########################################################################################
+
+#---- STATIC --------------------------------------------------------------------------------------
+
+def static(**kwargs):
+    """ The @static() decorator initializes static variables.
+    """
+    def decorator(f):
+        for k, v in kwargs.items():
+            setattr(f, k, v)
+        return f
+    return decorator
+
+# @static(i=0)
+# def uid():
+#     uid.i += 1
+#     return uid.i
 
 #---- PARALLEL ------------------------------------------------------------------------------------
 # Parallel processing uses multiple CPU's to execute multiple processes simultaneously.
@@ -271,6 +297,41 @@ def retry(exception, tries, f, *args, **kwargs):
 # Asynchronous + retry:
 # f = asynchronous(lambda x: retry(Exception, 2, addx, x), callback)
 
+#---- LAZY ----------------------------------------------------------------------------------------
+# A lazy container takes lambda functions as values, which are evaluated when retrieved.
+
+class LazyDict(collections.abc.MutableMapping):
+
+    def __init__(self, *args, **kwargs):
+        self._dict = dict(*args, **kwargs)
+        self._done = set()
+
+    def __setitem__(self, k, v):
+        self._dict[k] = v
+
+    def __getitem__(self, k):
+        v = self._dict[k]
+        if not k in self._done:
+            self._dict[k] = v = v()
+            self._done.add(k)
+        return v
+
+    def __delitem__(self, k):
+        self._dict.pop(k)
+        self._done.remove(k)
+
+    def __len__(self):
+        return len(self._dict)
+
+    def __iter__(self):
+        return iter(self._dict)
+
+    def __repr__(self):
+        return repr(dict(self))
+
+# models = LazyDict()
+# models['en'] = lambda: Perceptron('huge.json')
+
 ##### ETC #########################################################################################
 
 #---- LOG -----------------------------------------------------------------------------------------
@@ -351,6 +412,12 @@ def shuffled(a):
     for v in sorted(a, key=lambda v: random.random()):
         yield v
 
+def unique(a):
+    """ Returns an iterator of unique values in the list, in order.
+    """
+    s = set() # seen?
+    return iter(v for v in a if not (v in s or s.add(v)))
+
 def chunks(a, n=2):
     """ Returns an iterator of tuples of n consecutive values.
     """
@@ -399,10 +466,10 @@ def choice(a, p=[]):
 # Each line in the file is a row in a table.
 # Each row consists of column fields, separated by a comma.
 
-class matrix(list):
+class table(list):
 
     def __getitem__(self, i):
-        """ A 2D list with advanced slicing: matrix[row1:row2, col1:col2].
+        """ A 2D list with advanced slicing: table[row1:row2, col1:col2].
         """
         if isinstance(i, tuple):
             i, j = i
@@ -421,18 +488,18 @@ class matrix(list):
         a.append('</table>')
         return u'\n'.join(a)
 
-# m = matrix()
-# m.append([1, 2, 3])
-# m.append([4, 5, 6])
-# m.append([7, 8, 9])
+# t = table()
+# t.append([1, 2, 3])
+# t.append([4, 5, 6])
+# t.append([7, 8, 9])
 # 
-# print(m)        # [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
-# print(m[0])     # [1, 2, 3]
-# print(m[0,0])   #  1
-# print(m[:,0])   # [1, 4, 7]
-# print(m[:2,:2]) # [[1, 2], [4, 5]]
+# print(t)        # [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+# print(t[0])     # [1, 2, 3]
+# print(t[0,0])   #  1
+# print(t[:,0])   # [1, 4, 7]
+# print(t[:2,:2]) # [[1, 2], [4, 5]]
 
-class CSV(matrix):
+class CSV(table):
 
     def __init__(self, name='', separator=',', rows=[]):
         """ Returns the given .csv file as a list of rows, each a list of values.
@@ -502,6 +569,9 @@ def cd(*args):
     return p
 
 # print(cd('test.csv'))
+
+# for code, state, adj, region, gov, city, lang, rating in csv(cd('loc.csv')):
+#     print(state)
 
 #---- SQL -----------------------------------------------------------------------------------------
 # A database is a collection of tables, with rows and columns of structured data.
@@ -622,7 +692,7 @@ def SELECT(table, *fields, **where):
     """
 
     def op(v):
-        if isinstance(v, basestring) and re.search(r'^<=|>=', v): # '<10'
+        if isinstance(v, basestring) and re.search(r'^<=|>=', v): # '<=10'
             return v[:2], v[2:]
         if isinstance(v, basestring) and re.search(r'^<|>', v): # '<10'
             return v[:1], v[1:]
@@ -967,6 +1037,9 @@ class Bayes(Model):
 # capturing 'small words' such as pronouns, smileys, word suffixes (-ing)
 # and language-specific letter combinations (oeu, sch, tch, ...)
 
+URL = re.compile(r'(https?://[^\s]+)')
+REF = re.compile(r'([\w.]*@[\w.]+)', flags=re.U)
+
 def chngrams(s, n=3):
     """ Returns an iterator of character n-grams.
     """
@@ -984,8 +1057,8 @@ def v(s, features=('ch3',)): # (vector)
         Can be used as Perceptron.train(v(s)) or predict(v(s)).
     """
    #s = s.lower()
-    s = re.sub(r'(https?://[^\s]+)', 'http://', s)
-    s = re.sub(r'(@[\w.]+)', '@me', s, flags=re.U)
+    s = re.sub(URL, '://', s)
+    s = re.sub(REF, '@**', s)
     v = collections.Counter()
     v[''] = 1 # bias
     for f in features:
@@ -1346,7 +1419,13 @@ def tfidf(vectors=[]):
 def features(vectors=[]):
     """ Returns the set of features for all vectors.
     """
-    return set(itertools.chain(*(vectors)))
+    return set().union(*vectors)
+
+def index(a=[], inverted=True):
+    if inverted:
+        return {v: i for i, v in enumerate(a)}
+    else:
+        return {i: v for i, v in enumerate(a)}
 
 def centroid(vectors=[]):
     """ Returns the mean vector for all vectors.
@@ -1446,9 +1525,40 @@ def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
 # for cluster in kmeans(data, k=2):
 #     print(cluster) # cats vs dogs
 
+#---- VECTOR MATRIX -------------------------------------------------------------------------------
+
+def frank(vectors=[]):
+    """ Returns a (feature, index)-dict ranked by document frequency,
+        i.e., the feature that occurs in the most vectors has rank 0.
+    """
+    r = sum(map(collections.Counter, vectors), collections.Counter())
+    r = sorted(r, key=lambda f: (-r[f], f))
+    r = map(reversed, enumerate(r))
+    r = collections.OrderedDict(r)
+    return r
+
+# print(rankf([{'a': 0}, {'b': 1}, {'b': 1, 'c': 1}, {'c': 1}]))
+# {'b': 0, 'c': 1}
+
+def matrix(vectors=[], features={}):
+    """ Returns a 2D numpy.ndarray of the given vectors,
+        with the given (feature, index)-dict as columns.
+    """
+    import numpy
+    f = features or frank(vectors)
+    m = numpy.zeros((len(vectors), len(f)))
+    for v, a in zip(vectors, m):
+        a.put(map(f.__getitem__, v), v.values())
+    return m
+
 ##### NLP #########################################################################################
 
 #---- TEXT ----------------------------------------------------------------------------------------
+
+LINK = re.compile(r'(https?://.*?|www\..*?|[\w|-]+\.(?:com|net|org))(?:[.?!,)])?(?:\'|\"|\s|$)')
+
+def diff(s1, s2):
+    raise NotImplementedError
 
 def readability(s):
     """ Returns the readability of the given string (0.0-1.0).
@@ -1478,6 +1588,23 @@ def readability(s):
     r = max(r, 0.0)
     r = min(r, 1.0)
     return r
+
+def detag(s):
+    """ Returns the string with no HTML tags.
+    """
+    class Parser(HTMLParser, list):
+        def handle_data(self, s):
+            self.append(s)
+        def handle_entityref(self, s):
+            self.append('&')
+        def strip(self, s):
+            self.feed(s.replace('&', '&amp;'))
+            self.close()
+            return ''.join(self)
+
+    return Parser().strip(s)
+
+# print(detag('<a>a</a>&<b>b</b>'))
 
 def destress(s, replace={}):
     """ Returns the string with no diacritics.
@@ -1523,7 +1650,7 @@ def decamel(s, separator="_"):
     s = s.lower()
     return s
 
-# print decamel('HTTPError404NotFound') # http_error_404_not_found
+# print(decamel('HTTPError404NotFound')) # http_error_404_not_found
 
 def sg(w, language='en', known={'aunties': 'auntie'}):
     """ Returns the singular of the given plural noun.
@@ -1531,42 +1658,42 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
     if w in known: 
         return known[w]
     if language == 'en':
-        if re.search(r'(?i)ss|[^s]sis|[^mnotr]us$', w     ):  # ± 93%
+        if re.search(r'(?i)ss|[^s]sis|[^mnotr]us$', w     ):   # ± 93%
             return w
-        for pl, sg in (                                       # ± 98% accurate (CELEX)
-          (r'          ^(son|brother|father)s-', '\\1-'   ),
-          (r'      ^(daughter|sister|mother)s-', '\\1-'   ),
-          (r'                          people$', 'person' ),
-          (r'                             men$', 'man'    ),
-          (r'                        children$', 'child'  ),
-          (r'                           geese$', 'goose'  ),
-          (r'                            feet$', 'foot'   ),
-          (r'                           teeth$', 'tooth'  ),
-          (r'                            oxen$', 'ox'     ),
-          (r'                        (l|m)ice$', '\\1ouse'),
-          (r'                        (au|eu)x$', '\\1'    ),
-          (r'                 (ap|cod|rt)ices$', '\\1ex'  ),  # -ices
-          (r'                        (tr)ices$', '\\1ix'  ),
-          (r'                     (l|n|v)ises$', '\\1is'  ),
-          (r'(cri|(i|gn|ch|ph)o|oa|the|ly)ses$', '\\1sis' ),
-          (r'                            mata$', 'ma'     ),  # -a/ae
-          (r'                              na$', 'non'    ),
-          (r'                               a$', 'um'     ),
-          (r'                               i$', 'us'     ),
-          (r'                              ae$', 'a'      ), 
-          (r'           (l|ar|ea|ie|oa|oo)ves$', '\\1f'   ),  # -ves  +1%
-          (r'                     (l|n|w)ives$', '\\1ife' ),
-          (r'                 ^([^g])(oe|ie)s$', '\\1\\2' ),  # -ies  +5%
-          (r'                  (^ser|spec)ies$', '\\1ies' ),
-          (r'(eb|gp|ix|ipp|mb|ok|ov|rd|wn)ies$', '\\1ie'  ),
-          (r'                             ies$', 'y'      ), 
-          (r'    ([^rw]i|[^eo]a|^a|lan|y)ches$', '\\1che' ),  # -es   +5%
-          (r'  ([^c]ho|fo|th|ph|(a|e|xc)us)es$', '\\1e'   ),
-          (r'([^o]us|ias|ss|sh|zz|ch|h|o|x)es$', '\\1'    ),
-          (r'                               s$', ''       )): # -s    +85%
+        for pl, sg in (                                        # ± 98% accurate (CELEX)
+          (r'          ^(son|brother|father)s-' , '\\1-'   ),
+          (r'      ^(daughter|sister|mother)s-' , '\\1-'   ),
+          (r'                          people$' , 'person' ),
+          (r'                             men$' , 'man'    ),
+          (r'                        children$' , 'child'  ),
+          (r'                           geese$' , 'goose'  ),
+          (r'                            feet$' , 'foot'   ),
+          (r'                           teeth$' , 'tooth'  ),
+          (r'                            oxen$' , 'ox'     ),
+          (r'                        (l|m)ice$' , '\\1ouse'),
+          (r'                        (au|eu)x$' , '\\1'    ),
+          (r'                 (ap|cod|rt)ices$' , '\\1ex'  ),  # -ices
+          (r'                        (tr)ices$' , '\\1ix'  ),
+          (r'                     (l|n|v)ises$' , '\\1is'  ),
+          (r'(cri|(i|gn|ch|ph)o|oa|the|ly)ses$' , '\\1sis' ),
+          (r'                            mata$' , 'ma'     ),  # -a/ae
+          (r'                              na$' , 'non'    ),
+          (r'                               a$' , 'um'     ),
+          (r'                               i$' , 'us'     ),
+          (r'                              ae$' , 'a'      ), 
+          (r'           (l|ar|ea|ie|oa|oo)ves$' , '\\1f'   ),  # -ves  +1%
+          (r'                     (l|n|w)ives$' , '\\1ife' ),
+          (r'                 ^([^g])(oe|ie)s$' , '\\1\\2' ),  # -ies  +5%
+          (r'                  (^ser|spec)ies$' , '\\1ies' ),
+          (r'(eb|gp|ix|ipp|mb|ok|ov|rd|wn)ies$' , '\\1ie'  ),
+          (r'                             ies$' , 'y'      ), 
+          (r'    ([^rw]i|[^eo]a|^a|lan|y)ches$' , '\\1che' ),  # -es   +5%
+          (r'  ([^c]ho|fo|th|ph|(a|e|xc)us)es$' , '\\1e'   ),
+          (r'([^o]us|ias|ss|sh|zz|ch|h|o|x)es$' , '\\1'    ),
+          (r'                               s$' , ''       )): # -s    +85%
             if re.search(r'(?i)' + pl.strip(), w):
                 return re.sub(r'(?i)' + pl.strip(), sg, w)
-    return w                                                  #       +1%
+    return w                                                   #       +1%
 
 # print(sg('avalanches')) # avalanche
 
@@ -1755,10 +1882,10 @@ class Sentence(list):
 # for w, tag in Sentence(s):
 #     print(w, tag)
 
-TAGGER = {} # {'en': Model}
+TAGGER = LazyDict() # {'en': Model}
 
 for f in glob.glob(cd('*-pos.json')):
-    TAGGER[f.split('/')[-1][:2]] = Perceptron.load(open(f))
+    TAGGER[f.split('-')[-2][-2:]] = lambda: Perceptron.load(open(f))
 
 def tag(s, language='en'):
     """ Returns the tokenized + tagged string.
@@ -1989,13 +2116,13 @@ def constituents(sentence, language='en'):
         or PP (prepositional phrase).
     """
     if language in ('da', 'de', 'en', 'nl', 'no', 'sv'): # Germanic
-        P = (('NP', 'DET|PRON? NUM* (ADV|ADJ+ CONJ|, ADV|ADJ)* ADV|ADJ* -ing/VERB* NOUN|NAME+'),
-             ('NP', 'NOUN|NAME DET NOUN|NAME'),
-             ('NP', 'PRON'),
-             ('AP', '(ADV|ADJ+ CONJ|, ADV|ADJ)* ADV* ADJ+'),
-             ('VP', 'PRT|ADV* VERB+ ADV?'),
-             ('PP', 'PREP+'),
-             (  '', '-')
+        P = (('NP' , 'DET|PRON? NUM* (ADV|ADJ+ CONJ|, ADV|ADJ)* ADV|ADJ* -ing/VERB* NOUN|NAME+'),
+             ('NP' , 'NOUN|NAME DET NOUN|NAME'),
+             ('NP' , 'PRON'),
+             ('AP' , '(ADV|ADJ+ CONJ|, ADV|ADJ)* ADV* ADJ+'),
+             ('VP' , 'PRT|ADV* VERB+ ADV?'),
+             ('PP' , 'PREP+'),
+             (  '' , '-')
         )
     s = u(sentence)
     s = re.sub(r'\s+', ' ', s)
@@ -2032,6 +2159,64 @@ def head(phrase, tag='NP', language='en'):
 
 # print(head(Phrase('cat/NOUN fight/NOUN')))
 # print(head(Phrase('combat/NOUN de/PREP chats/NOUN'), language='fr'))
+
+#---- SENTIMENT ANALYSIS --------------------------------------------------------------------------
+# Sentiment analysis aims to determine the affective state of (subjective) text,
+# for example whether a customer review is positive or negative about a product.
+
+polarity = {
+    'en': {
+       u'😃'    : +1.0,
+        'great' : +1.0,
+        'good'  : +0.5,
+        'nice'  : +0.5,
+        'bad'   : -0.5,
+        'awful' : -1.0,
+       u'😠'    : -1.0,
+    }
+}
+
+negation = {
+    'en': set(('no', 'not', "n't")),
+}
+
+intensifiers = {
+    'en': set(('really', 'very')),
+}
+
+for f in glob.glob(cd('*-pol.json')):
+    polarity[f.split('-')[-2][-2:]] = json.load(open(f))
+
+def sentiment(s, language='en'):
+    """ Returns the polarity of the string as a float,
+        from negative (-1.0) to positive (+1.0).
+    """
+    p = polarity.get(language, {})
+    s = s.lower()
+    s = s.split()
+    a = []
+    for i, w in enumerate(s):
+        if w in p:
+            n = p[w]
+            if i > 0:
+                if s[i-1] in negation.get(language, ()):     # not good
+                    n = n * -1.0
+                if s[i-1] in intensifiers.get(language, ()): # very bad
+                    n = n * +1.5
+            a.append(n)
+    v = avg(a)
+    v = max(v, -1.0)
+    v = min(v, +1.0)
+    return v
+
+# s = 'This movie is very bad!'
+# s = tokenize(s)
+# s = sentiment(s)
+# print(s)
+
+def positive(s, language='en', threshold=0.1):
+    # = 75% (Pang & Lee polarity dataset v1.0)
+    return sentiment(s, language) >= threshold
 
 #---- WORDNET -------------------------------------------------------------------------------------
 # WordNet is a free lexical database of synonym sets, and relations between synonym sets.
@@ -2199,7 +2384,7 @@ def serialize(url='', data={}):
     """
     p = urlparse.urlsplit(url)
     q = urlparse.parse_qsl(p.query)
-    q.extend((b(k), b(v)) for k, v in data.items())
+    q.extend((b(k), b(v)) for k, v in sorted(data.items()))
     q = urlencode(q, doseq=True)
     p = p.scheme, p.netloc, p.path, q, p.fragment
     s = urlparse.urlunsplit(p)
@@ -2217,11 +2402,19 @@ class NotFound        (Exception): pass # 404
 class TooManyRequests (Exception): pass # 429
 class Timeout         (Exception): pass
 
-def request(url, data={}, headers={}):
+cookies = cookielib.CookieJar()
+
+def request(url, data={}, headers={}, timeout=10):
     """ Returns a file-like object to the given URL.
     """
+
+    if cookies is not None:
+        f = urllib2.HTTPCookieProcessor(cookies)
+        f = urllib2.build_opener(f)
+    else:
+        f = urllib2.build_opener()
     try:
-        f = urlopen(Request(url, urlencode(data) if data else None, headers))
+        f = f.open(Request(url, urlencode(data) if data else None, headers), timeout=timeout)
 
     except URLError as e:
         status = getattr(e, 'code', None) # HTTPError
@@ -2248,20 +2441,24 @@ def request(url, data={}, headers={}):
 
 CACHE = cd('cache')
 
-def download(url, data={}, headers={}, cached=False):
+@static(ready=0)
+def download(url, data={}, headers={}, timeout=10, delay=0, cached=False):
     """ Returns the content at the given URL, as a byte string.
     """
-    if not cached:
-        return request(url, data, headers).read()
-
-    k = hashlib.sha1(b(url)).hexdigest()[:16]
+    k = re.sub(r'&?oauth_[\w=%-]+', '', url)
+    k = hashlib.sha1(b(k)).hexdigest()[:16]
     k = os.path.join(CACHE, '%s.txt' % k)
 
     if not os.path.exists(CACHE):
         os.makedirs(CACHE)
-    if not os.path.exists(k):
+    if not os.path.exists(k) \
+    or not cached:
+        s = request(url, data, headers, timeout).read()
         with open(k, 'wb') as f:
-            f.write(download(url, data, headers))
+            f.write(s)
+
+        time.sleep(max(0, download.ready - time.time())) # rate limiting
+        download.ready = time.time() + delay
 
     with open(k, 'rb') as f:
         return f.read()
@@ -2293,6 +2490,30 @@ class stream(list):
                 else:
                     raise e
 
+def redirect(url, *args, **kwargs):
+    """ Returns the redirected URL.
+    """
+    return request(url, *args, **kwargs).geturl()
+
+def headers(url, *args, **kwargs):
+    """ Returns a headers dict for the given URL.
+    """
+    return request(url, *args, **kwargs).headers
+
+def sniff(url, *args, **kwargs):
+    """ Returns the media type for the given URL.
+    """
+    return request(url, *args, **kwargs).headers.get('Content-Type', '').split(";")[0]
+
+# print(sniff('http://www.textgain.com')) # 'text/html'
+
+# Clear cache from 7+ days ago:
+
+# t = time.time() - 7 * 24 * 60 * 60 
+# for f in glob.glob(cd(CACHE, '*')):
+#     if os.stat(f).st_ctime < t:
+#         os.remove(f)
+
 #---- SEARCH --------------------------------------------------------------------------------------
 # The Bing Search API grants 5,000 free requests per month.
 # The Google Search API grants 100 free requests per day.
@@ -2304,7 +2525,7 @@ keys = {
 
 Result = collections.namedtuple('Result', ('url', 'text'))
 
-def bing(q, page=1, language='en', cached=False, key=None):
+def bing(q, page=1, language='en', delay=1, cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples from Bing.
     """
     if 0 < page <= 100:
@@ -2318,7 +2539,7 @@ def bing(q, page=1, language='en', cached=False, key=None):
             urlquote(b(q)),
             urlquote(b(language)), 1 + 10 * (page - 1))
         k = base64.b64encode(b(':%s' % (key or keys['Bing'])))
-        r = download(r, headers={'Authorization': b'Basic ' + k}, cached=cached)
+        r = download(r, headers={'Authorization': b'Basic ' + k}, delay=delay, cached=cached)
         r = json.loads(u(r))
 
         for r in r['d']['results']:
@@ -2326,9 +2547,8 @@ def bing(q, page=1, language='en', cached=False, key=None):
                 r['Url'],
                 r['Description']
             )
-            time.sleep(0.1)
 
-def google(q, page=1, language='en', cached=False, key=None):
+def google(q, page=1, language='en', delay=1, cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples from Google.
     """
     if 0 < page <= 10:
@@ -2343,7 +2563,7 @@ def google(q, page=1, language='en', cached=False, key=None):
         r %= (
             urlquote(b(q)),
             urlquote(b(language)), 1 + 10 * (page - 1))
-        r = download(r, cached=cached)
+        r = download(r, delay=delay, cached=cached)
         r = json.loads(u(r))
 
         for r in r['items']:
@@ -2351,16 +2571,15 @@ def google(q, page=1, language='en', cached=False, key=None):
                 r['link'],
                 r['htmlSnippet']
             )
-            time.sleep(0.1)
 
-def search(q, engine='bing', page=1, language='en', cached=False, key=None):
+def search(q, engine='bing', page=1, language='en', delay=1, cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples.
     """
     f = globals().get(engine, lambda *args: None)
     if key:
-        return f(q, page, language, cached, key)
+        return f(q, page, language, delay, cached, key)
     else:
-        return f(q, page, language, cached)
+        return f(q, page, language, delay, cached)
 
 # for url, description in search('textgain'):
 #     print(url)
@@ -2369,7 +2588,7 @@ def search(q, engine='bing', page=1, language='en', cached=False, key=None):
 
 #---- TRANSLATE -----------------------------------------------------------------------------------
 
-def translate(q, source='', target='en', cached=False, key=None):
+def translate(q, source='', target='en', delay=1, cached=False, key=None):
     """ Returns the translated string.
     """
     r  = 'https://www.googleapis.com/language/translate/v2?'
@@ -2377,7 +2596,7 @@ def translate(q, source='', target='en', cached=False, key=None):
     r += '&target=%s' % target
     r += '&key=%s'    % key
     r += '&q=%s'      % urlquote(b(q[:1000]))
-    r  = download(r, cached=cached)
+    r  = download(r, delay=delay, cached=cached)
     r  = json.loads(u(r))
     r  = r.get('data', {})
     r  = r.get('translations', [{}])[0]
@@ -2406,98 +2625,120 @@ keys['Twitter'] = OAuth(
     'MrsrcmKkyzWOTjoKVsPLVvCYRtMcDYaIx0NKIb6yhRIhv'
 ))
 
-Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'photo'))
+Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'photo', 'likes'))
 
 class Twitter(object):
 
     def parse(self, v):
+        def f(v):
+            v = v.get('extended_tweet', {}) \
+                 .get('full_text',          # 240 characters (stream)
+                v.get('full_text',          # 240 characters (search)
+                v.get('text', '')))         # 140 characters (< 2017)
+            v = v.replace('&amp;', '&')
+            v = v.replace('&lt;' , '<')
+            v = v.replace('&gt;' , '>')
+            return v
+
         t = Tweet(
             u(v.get('id_str', '')),
-            u(v.get('text', '')),
+            u(f(v)),
             u(v.get('created_at', '')),
             u(v.get('lang', '')).replace('und', ''),
             u(v.get('user', {}).get('screen_name', '')),
-            u(v.get('user', {}).get('profile_image_url', ''))
+            u(v.get('user', {}).get('profile_image_url', '')),
+          int(v.get('favorite_count', 0))
         )
         RT =  v.get('retweeted_status')
         if RT:
             # Replace truncated retweet (...) with full text.
-            t = t._replace(text=u('RT @%s: %s' % (RT['user']['screen_name'], RT['text'])))
+            t = t._replace(text=u('RT @%s: %s' % (RT['user']['screen_name'], f(RT))))
         return t
 
-    def stream(self, q, language='', key=None):
+    def stream(self, q, language='', timeout=60, delay=1, key=None):
         """ Returns an iterator of tweets (live).
         """
         k = key or keys['Twitter']
         r = 'https://stream.twitter.com/1.1/statuses/filter.json', {
-            'language': language,
-            'track'   : q
+            'language'   : language,
+            'track'      : q
         }
         r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
         r = serialize(*r)
-        r = request(r)
+        r = request(r, timeout=timeout)
 
         for v in stream(r):
             v = u(v)
             v = json.loads(v)
             v = self.parse(v)
             yield v
-            time.sleep(1)
+            time.sleep(delay)
 
-    def search(self, q, language='', cached=False, key=None):
+    def search(self, q, language='', delay=5.5, cached=False, key=None):
         """ Returns an iterator of tweets.
         """
         id = ''
         for i in range(10):
             k = key or keys['Twitter']
             r = 'https://api.twitter.com/1.1/search/tweets.json', {
-                'count' : 100,
-                'max_id': id,
-                'lang'  : language,
-                'q'     : q
+                'tweet_mode' : 'extended',
+                'count'      : 100,
+                'max_id'     : id,
+                'lang'       : language,
+                'q'          : q
             }
             r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
             r = serialize(*r)
-            r = download(r, cached=cached)
+            r = download(r, delay=delay, cached=cached) # 180 requests / 15 minutes
             r = json.loads(u(r))
             r = r.get('statuses', [])
 
             for v in r:
                 yield self.parse(v)
-                time.sleep(0.05) # ~= 180 requests / 15 minutes
             if len(r) > 0:
                 id = int(v['id_str']) - 1
             if len(r) < 100:
                 raise StopIteration
 
-    def follow(self, q, cached=False, key=None):
+    def follow(self, q, language='', delay=5.5, cached=False, key=None):
         """ Returns an iterator of tweets for the given username.
         """
-        return self.search(u'from:' + q, '', cached, key)
+        return self.search(u'from:' + q, language, delay, cached, key)
 
-    def followers(self, q, cached=False, key=None):
+    def followers(self, q, delay=75, cached=False, key=None):
         """ Returns an iterator of followers for the given username.
         """
         id = -1
         while 1:
             k = key or keys['Twitter']
             r = 'https://api.twitter.com/1.1/followers/list.json', {
-                'count': 100,
-                'cursor': id,
-                'screen_name': q.lstrip('@')
+                'count'       : 200,
+                'cursor'      : id,
+                'screen_name' : q.lstrip('@')
             }
             r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
             r = serialize(*r)
-            r = download(r, cached=cached)
+            r = download(r, delay=delay, cached=cached) # 15 requests / 15 minutes
             r = json.loads(u(r))
 
             for v in r.get('users', []):
                 yield v.get('screen_name')
-                time.sleep(0.5) # ~= 15 requests / 15 minutes
             try:
                 id = r['next_cursor']
             except:
                 raise StopIteration
+            if id == 0:
+                raise StopIteration
+
+    def likes(self, q, delay=60, cached=False, headers={'User-Agent': 'Grasp.py'}):
+        """ Returns an iterator of usernames that liked the tweet with the given id.
+        """
+        r = 'https://twitter.com/i/activity/favorited_popup?id=%s' % q
+        r = download(r, headers=headers, delay=delay, cached=cached)
+        r = json.loads(u(r))
+
+        for v in set(re.findall(r'screen-name="(.*?)"', r.get('htmlUsers', ''))):
+            yield v
 
     def __call__(self, *args, **kwargs):
         return self.search(*args, **kwargs)
@@ -2516,25 +2757,28 @@ twitter = Twitter()
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
 
 BIBLIOGRAPHY = set((
-    'div'             ,
-    'table'           , # infobox
-    '#references'     , # references title
-    '.reflist'        , # references
-    '.reference'      , # [1]
-    '.mw-editsection' , # [edit]
-    '.noprint'        , # [citation needed]
+    'div'                ,
+    'table'              , # infobox
+    '#references'        , # references title
+    '.reflist'           , # references
+    '.reference'         , # [1]
+    '.mw-editsection'    , # [edit]
+    '.noprint'           , # [citation needed]
+    'h2 < #see_also'     ,
+    'h2 < #see_also ~ *' ,
+    'h2 < #notes'        ,
+    'h2 < #notes ~ *'    ,
 ))
 
-def wikipedia(q='', language='en', cached=True):
+def wikipedia(q='', language='en', delay=1, cached=True):
     """ Returns the HTML source of the given Wikipedia article (or '').
     """
-    time.sleep(1)
     r  = 'https://%s.wikipedia.org/w/api.php' % language
     r += '?action=parse'
     r += '&format=json'
     r += '&redirects=1'
-    r += '&page=%s' % urllib.quote(q)
-    r  = download(r, cached=cached)
+    r += '&page=%s' % urlquote(q)
+    r  = download(r, delay=delay, cached=cached)
     r  = json.loads(u(r))
 
     try:
@@ -2607,15 +2851,14 @@ def atom(xml, ns='http://www.w3.org/2005/Atom'):
     t = ElementTree.fromstring(b(xml))
     for e in t.iter('{%s}entry' % ns):
         yield Story(
-            u(e.findtext('{%s}link'     % ns, '')),
+            u(e.find    ('{%s}link'     % ns    ).get('href', '')),
             u(e.findtext('{%s}title'    % ns, '')),
             u(e.findtext('{%s}updated'  % ns, '')), u'',
             u(t.findtext('{%s}name'     % ns, ''))
         )
 
-def feed(url, cached=False, headers={'User-Agent': 'Grasp.py'}):
-    time.sleep(1)
-    s = download(url, cached=cached, headers=headers)
+def feed(url, delay=1, cached=False, headers={'User-Agent': 'Grasp.py'}):
+    s = download(url, headers=headers, delay=delay, cached=cached)
     for f in (rss, atom):
         try:
             for r in f(s):
@@ -2661,10 +2904,9 @@ def mail(to, subject, message, relay=SMTP('', '', 'smtp.gmail.com:465')):
 # The DOM or Document Object Model is a representation of a HTML document as a nested tree.
 # The DOM can be searched for specific elements using CSS selectors.
 
-# DOM('<div> <p>hello</p></div>') results in:
+# DOM('<div><p>hello</p></div>') results in:
 # DOM([
 #     Element('div', [
-#         Text(' '),
 #         Element('p', [
 #             Text('hello')
 #         ])
@@ -2711,10 +2953,14 @@ class Node(object):
 class Text(Node):
 
     def __init__(self, data):
+        Node.__init__(self)
         self.data = data
 
     def __str__(self):
         return self.data
+
+    def __repr__(self):
+        return 'Text(%s)' % repr(self.data)
 
 @printable
 class Element(Node):
@@ -2737,7 +2983,7 @@ class Element(Node):
         return 'Element(tag=%s)' % repr(self.tag)
 
     def __str__(self):
-        a = ' '.join('%s=%s' % (k, quote(v)) for k, v in self.attributes.items())
+        a = ' '.join('%s=%s' % (k, quote(v)) for k, v in self.attributes.items() if v is not None)
         a = ' ' + a if a else ''
         if self.tag in SELF_CLOSING:
             return u'<%s%s />' % (
@@ -2751,22 +2997,30 @@ class Element(Node):
         return ''.join(u(n) for n in self)
 
     @property
-    def next(self):
-        """ Yields the next sibling in Element.parent.children.
-        """
+    def successors(self):
         if self.parent:
             for n in self.parent.children[self.parent.children.index(self)+1:]:
                 if isinstance(n, Element):
-                    return n
+                    yield n
+
+    @property
+    def predecessors(self):
+        if self.parent:
+            for n in self.parent.children[:self.parent.children.index(self)]:
+                if isinstance(n, Element):
+                    yield n
+
+    @property
+    def next(self):
+        """ Yields the next sibling in Element.parent.children.
+        """
+        return next(self.successors, None)
 
     @property
     def previous(self):
         """ Yields the previous sibling in Element.parent.children.
         """
-        if self.parent:
-            for n in self.parent.children[:self.parent.children.index(self)]:
-                if isinstance(n, Element):
-                    return n
+        return next(self.predecessors, None)
 
     def match(self, tag='*', attributes={}):
         """ Returns True if the element has the given tag and attributes.
@@ -2804,11 +3058,18 @@ class Document(HTMLParser, Element):
         Element.__init__(self, tag=None)
         self.head = None
         self.body = None
+        self.type = None
         self._stack = [self]
         self.feed(u(html))
 
+    def __repr__(self):
+        return 'Document()'
+
     def __str__(self):
-        return self.html.strip()
+        return (self.type or '') + self.html
+
+    def handle_decl(self, decl):
+        self.type = '<!%s>' % decl
 
     def handle_entityref(self, name):
         self.handle_data('&%s;' % name)
@@ -2873,10 +3134,10 @@ DOM = Document
 
 SELECTOR = re.compile(''.join((
     r'^',
-    r'([+<>])?',                           # combinator + < >
-    r'(\w+|\*)?',                          # tag
-    r'((?:[.#][-\w]+)|(?:\[.*?\]))?',      # attributes # . [=]
-    r'(\:first-child|\:contains\(.*?\))?', # pseudo :
+    r'([+<>~])?',                                               # combinator + < >
+    r'(\w+|\*)?',                                               # tag
+    r'((?:[.#][-\w]+)|(?:\[.*?\]))?',                           # attributes # . [=]
+    r'(\:first-child|\:(?:nth-child|not|contains)\(.*?\))?',    # pseudo :
     r'$'
 )))
 
@@ -2890,12 +3151,17 @@ def selector(element, s):
     s = s.strip()
     s = s.lower()                                               # case-insensitive
     s = re.sub(r'\s+', ' ', s)
-    s = re.sub(r'([,+<>])\s', '\\1', s)
+    s = re.sub(r'([,+<>~])\s', '\\1', s)
+    s = s or '<>'
 
     for s in s.split(','):                                      # div, a
         e = [element]
         for s in s.split(' '):
-            combinator, tag, a, pseudo = SELECTOR.search(s).groups('')
+            try:
+                combinator, tag, a, pseudo = \
+                    SELECTOR.search(s).groups('')
+            except: 
+                return []
 
             tag = tag or '*'                                    # *
 
@@ -2928,18 +3194,28 @@ def selector(element, s):
                 e = (e.find(tag, a, 1) for e in e)
                 e = list(itertools.chain(*e))                   # div > a
             if combinator == '<':
-                e = map(lambda e: e.parent, e)
-                e = [e for e in e if e and e.match(tag, a)]     # div < a
+                e = [e for e in e if any(e.find(tag, a, 1))]    # div < a
             if combinator == '+':
                 e = map(lambda e: e.next, e)
                 e = [e for e in e if e and e.match(tag, a)]     # div + a
+            if combinator == '~':
+                e = map(lambda e: e.successors, e)
+                e = (e for e in e for e in e if e.match(tag, a))
+                e = list(unique(e))                             # div ~ a
 
-            if pseudo == ':first-child':
-                e = [e for e in e if not e.previous]            # div a:first-child
+            if pseudo.startswith(':first-child'):
+                e = (e for e in e if not e.previous)
+                e = list(unique(e))                             # div a:first-child
+            if pseudo.startswith(':nth-child'):
+                s = pseudo[10:].strip('()"\'')
+                e = [e[int(s) - 1]]                             # div a:nth-child(2)
+            if pseudo.startswith(':not'):
+                s = pseudo[4:].strip('()"\'')
+                e = [e for e in e if e not in element(s)]       # div:not(.main)
             if pseudo.startswith(':contains'):
-                s = pseudo[9:]
-                s = s.strip('()"\'')
-                e = [e for e in e if s in e.html.lower()]       # div:contains("hello")
+                s = pseudo[9:].strip('()"\'')
+                e = (e for e in e if s in e.html.lower())
+                e = list(unique(e))                             # div:contains("hello")
 
         m.extend(e)
     return m
@@ -2955,12 +3231,15 @@ def selector(element, s):
 # The plaintext() function traverses a DOM HTML element, strips all tags while keeping Text data.
 
 BLOCK = set((
+    'article'    ,
+    'aside'      ,
     'blockquote' ,
     'center'     ,
     'div'        ,
     'dl'         ,
     'figure'     ,
     'figcaption' ,
+    'footer'     ,
     'form'       ,
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'header'     , 
@@ -2986,7 +3265,7 @@ PLAIN = {
      'td' : lambda s: s + '\n'  ,
 }
 
-def plaintext(element, keep={}, ignore=set(('head', 'script', 'form')), format=PLAIN):
+def plaintext(element, keep={}, ignore=set(('head', 'script', 'style', 'form')), format=PLAIN):
     """ Returns the given element as a plaintext string.
         A (tag, [attributes])-dict to keep can be given.
     """
@@ -3018,10 +3297,12 @@ def plaintext(element, keep={}, ignore=set(('head', 'script', 'form')), format=P
         return s.strip()
 
     s = r(element)
-    s = re.sub(r'(\s) +' , '\\1' , s) # no left indent
-    s = re.sub(r'\n\n+'  , '\n\n', s) # no empty lines
-    s = re.sub(r'&nbsp;' , ' '   , s) # exdent bullets
-    s = re.sub(r'\n +\*' , '\n*' , s) # dedent bullets
+    s = re.sub(r'(\s) +'       , '\\1'  , s) # no left indent
+    s = re.sub(r'&nbsp;'       , ' '    , s) # exdent bullets
+    s = re.sub(r'\n +\*'       , '\n*'  , s) # dedent bullets
+    s = re.sub(r'\n\* ?(?=\n)' , ''     , s) # no empty lists
+    s = re.sub(r'\n\n+'        , '\n\n' , s) # no empty lines
+    s = s.strip()
     return s
 
 # dom = DOM(download('https://www.textgain.com'))
@@ -3051,6 +3332,77 @@ def decode(s):
     s = u(s)
     return s
 
+#---- NEWS ----------------------------------------------------------------------------------------
+# The customary schema for articles is <div itemprop="articleBody">, but there are many exceptions.
+# The article() function returns tidy plaintext for most articles from known newspapers.
+
+ARTICLE = (
+# CSS SELECTOR                                   USED BY:
+ 'article[class*="article"]'                 , # The Sun
+ 'article[itemprop="articleBody"]'           , # United Press International (UPI)
+    'span[itemprop="articleBody"]'           , # La Repubblica
+     'div[itemprop="articleBody"]'           , # Le Monde
+     'div[id="rcs-articleContent"] .column1' , # Reuters
+     'div[id*="storyBody"]'                  , # Academic Press (AP)
+     'div[id*="article_body"]'               , # Gazeta Wyborcza
+     'div[is$="article-body"]'               , # The Onion
+     'div[class*="story-body"]'              , # New York Times
+     'div[class*="entry-text"]'              , # Huffington Post
+     'div[class*="text"] article'            , # Yomiuri Shimbun
+     'div[class*="article-body"]'            , # Le Soir
+     'div[class^="article-section"]'         , # Der Spiegel
+     'div[class^="article_"]'                , # De Standaard
+     'div[class^="article-"]'                , # Aftonbladet
+     'div[class*="article"]'                 , # Dainik Bashkar
+     'article'                               , # Bild
+     '.news-detail'                          , # Hurriyet
+     '.postBody'                             ,
+     '.story'                                ,
+)
+
+SOCIAL = (
+  'script'                                   ,
+   'style'                                   ,
+    'form'                                   ,
+   'aside[class*="share"]'                   ,
+     'div[class*="share"]'                   ,
+      'ul[class*="share"]'                   ,
+      'li[class*="share"]'                   ,
+     'div[class*="social"]'                  ,
+      'ul[class*="social"]'                  ,
+       '*[class*="pagination"]'              ,
+       '*[class*="gallery"]'                 ,
+       '*[class*="photo"]'                   ,
+       '*[class*="video"]'                   ,
+       '*[class*="button"]'                  ,
+       '*[class*="signup"]'                  ,
+       '*[class*="footer"]'                  ,
+       '*[class*="hidden"]:not(.field-label-hidden)', # <div class="visually-hidden"> (NYT)
+       '*[class*="module"]'                  ,
+       '*[class*="widget"]'                  ,
+       '*[class*="meta"]'                    ,
+)
+
+def article(url, cached=False, headers={'User-Agent': 'Grasp.py'}):
+    """ Returns a (title, article)-tuple from the given online newspaper.
+    """
+    s  = download(url, cached=cached, headers=headers)
+    t  = DOM(s)
+    e1 = t('article h1, h1:not(.logo), h1, h2, .entry-title')
+    e2 = t(', '.join(ARTICLE))
+    e1 = next(iter(e1), '')
+    e2 = next(iter(e2), '')
+    s1 = plaintext(e1).strip('"\'')    # article title
+    s2 = plaintext(e2, ignore=SOCIAL)  # article text
+    s2 = re.sub('\n--+\n\n', '\n\n', s2)
+    return s1, s2
+
+# url = 'http://rss.nytimes.com/services/xml/rss/nyt/World.xml'
+# for story in feed(url):
+#     title, text = article(story.url, cached=True)
+#     print(title.upper() + '\n')
+#     print(text + '\n\n')
+
 ##### DB ##########################################################################################
 
 #---- DATE ----------------------------------------------------------------------------------------
@@ -3058,12 +3410,12 @@ def decode(s):
 
 DATE = (
 #    http://strftime.org           # DATE                            USED BY:
-    '%a %b %d %H:%M:%S +0000 %Y',  # Mon Jan 31 10:00:00 +0000 2000  Twitter
-    '%Y-%m-%dT%H:%M:%S+0000',      # 2000-01-31T10:00:00+0000        Facebook
-    '%Y-%m-%dT%H:%M:%SZ',          # 2000-01-31T10:00:00Z            Bing
-    '%Y-%m-%d %H:%M:%S',           # 2000-01-31 10:00:00
-    '%Y-%m-%d %H:%M',              # 2000-01-31 10:00
-    '%Y-%m-%d',                    # 2000-01-31
+    '%a %b %d %H:%M:%S +0000 %Y' , # Mon Jan 31 10:00:00 +0000 2000  Twitter
+    '%Y-%m-%dT%H:%M:%S+0000'     , # 2000-01-31T10:00:00+0000        Facebook
+    '%Y-%m-%dT%H:%M:%SZ'         , # 2000-01-31T10:00:00Z            Bing
+    '%Y-%m-%d %H:%M:%S'          , # 2000-01-31 10:00:00
+    '%Y-%m-%d %H:%M'             , # 2000-01-31 10:00
+    '%Y-%m-%d'                   , # 2000-01-31
 )
 
 def rfc_2822(s):                   # Mon, 31 Jan 2000 10:00:00 GMT   RSS
@@ -3096,21 +3448,33 @@ class Date(datetime.datetime):
     def timestamp(self):
         return int(time.mktime(self.timetuple()))
 
+    def __add__(self, s):
+        return date(datetime.datetime.__add__(self, datetime.timedelta(seconds=s)))
+
+    def __sub__(self, s):
+        return date(datetime.datetime.__sub__(self, datetime.timedelta(seconds=s)))
+
     def __str__(self):
         return self.strftime(self.format)
 
     def __repr__(self):
         return "Date(%s)" % repr(str(self))
 
-def date(v=None, format='%Y-%m-%d %H:%M:%S'):
+def date(*v, **format):
     """ Returns a Date from the given timestamp or date string.
     """
-    if v is None:
+    format = format.get('format', '%Y-%m-%d %H:%M:%S')
+
+    if len(v) > 1:
+        return Date(*v) # (year, month, day, ...)
+    if len(v) < 1:
         return Date.now()
+    else:
+        v = v[0]
     if isinstance(v, (int, float)):
         return Date.fromtimestamp(v)
-    if isinstance(v, Date):
-        return Date.fromtimestamp(v.timestamp)
+    if isinstance(v, datetime.datetime):
+        return Date.fromtimestamp(time.mktime(v.timetuple()))
     try:
         return Date.fromtimestamp(rfc_2822(v)) 
     except: 
@@ -3121,6 +3485,9 @@ def date(v=None, format='%Y-%m-%d %H:%M:%S'):
         except:
             pass
     raise DateError('unknown date format: %s' % repr(v))
+
+# print(date('Dec 31 1999', format='%b %d %Y'))
+# print(date(1999, 12, 31))
 
 ##### WWW #########################################################################################
 
@@ -3314,7 +3681,10 @@ class App(ThreadPoolMixIn, WSGIServer):
         start_response('%s %s' % (r.code, STATUS[r.code]), list(r.headers.items()))
         return [b(v)]
 
-app = application = App(threads=10)
+try:
+    app = application = App(threads=10)
+except socket.error:
+    pass # 'Address already in use'
 
 # http://127.0.0.1:8080/products?page=1
 # @app.route('/')
@@ -3355,19 +3725,19 @@ def bfs(g, n, f=lambda n: True, v=set()):
     """ Breadth-first search (spreading activation).
         Calls f(n) on the given node, its adjacent nodes if True, and so on.
     """
-    q = [n]
+    q = collections.deque([n])
     while q:
-        n = q.pop(0)
-        if f(n) != False and not n in v:
+        n = q.popleft()
+        if n not in v and f(n) != False:
             q.extend(g.get(n, {}).keys())
             v.add(n)
 
 # def visit(n):
 #     print(n)
-#
+# 
 # g = {
 #     'a': {'b': 1},
-#     'b': {'c': 1, 'd': 1},
+#     'b': {'c': 1, 'd': 1, 'a': 1},
 #     'c': {'x': 1}
 # }
 # dfs(g, 'a', visit)
@@ -3416,7 +3786,7 @@ def betweenness(g, k=1000):
     """ Returns a dict of node id's and their centrality score (0.0-1.0),
         which is the amount of shortest paths that pass through a node.
     """
-    n = set(itertools.chain(g, *g.values())) # all nodes
+    n = set().union(g, *g.values()) # all nodes
     w = collections.Counter(n)
     if k:
         n = list(shuffled(n))[:k]
@@ -3434,7 +3804,7 @@ def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
     """ Returns a dict of node id's and their centrality score (0.0-1.0),
         which is the amount of indirect incoming links to a node.
     """
-    n = set(itertools.chain(g, *g.values())) # all nodes
+    n = set().union(g, *g.values()) # all nodes
     v = dict.fromkeys(n, 1.0 / len(n))
     for i in range(iterations):                            #       A -> B -> C
         p = v.copy() # prior pagerank                      #      0.3  0.3  0.3
@@ -3500,7 +3870,7 @@ def components(g):
     """ Returns an iterator of components, largest-first,
         where each component is a set of connected nodes.
     """
-    n = set(itertools.chain(g, *g.values())) # all nodes
+    n = set().union(g, *g.values()) # all nodes
     a = [set((n,)) | set(g.get(n, ())) for n in n]
     for i in reversed(range(len(a))):
         for j in reversed(range(i + 1, len(a))):
@@ -3583,7 +3953,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
         """ Returns an iterator of edges,
             each a named tuple (node1, node2, weight, type).
         """
-        return iter(set(itertools.chain(*(e.values() for e in self.values()))))
+        return iter(set().union(*(e.values() for e in self.values())))
 
     def edge(self, n1, n2):
         """ Returns the edge from node n1 to n2, or None.
