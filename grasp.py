@@ -34,6 +34,7 @@ __copyright__ =  'Textgain'
 # WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ###################################################################################################
+# Grasp.py is a collection of simple algorithms, functions and classes for data mining & analytics:
 
 # WWW  Web Mining                   search engines, servers, HTML DOM + CSS selectors, plaintext
 # DB   Databases                    comma-separated values, dates, SQL
@@ -42,6 +43,9 @@ __copyright__ =  'Textgain'
 # NET  Network Analysis             shortest paths, centrality, components, communities
 # ETC                               recipes for functions, strings, lists, ...
 
+# Grasp.py is based on the Pattern toolkit (https://github.com/clips/pattern), focusing on brevity.
+# Most functions have around 10 lines of code, and most algorithms have around 25-50 lines of code.
+# Most classes have about 50-75 lines of code.
 ###################################################################################################
 
 import sys
@@ -164,7 +168,7 @@ REGEX = type(re.compile(''))
 
 # isinstance(re.compile(''), REGEX)
 
-##### ETC #########################################################################################
+###################################################################################################
 
 #---- STATIC --------------------------------------------------------------------------------------
 
@@ -297,6 +301,8 @@ def retry(exception, tries, f, *args, **kwargs):
 # Asynchronous + retry:
 # f = asynchronous(lambda x: retry(Exception, 2, addx, x), callback)
 
+###################################################################################################
+
 #---- LAZY ----------------------------------------------------------------------------------------
 # A lazy container takes lambda functions as values, which are evaluated when retrieved.
 
@@ -332,7 +338,7 @@ class LazyDict(collections.abc.MutableMapping):
 # models = LazyDict()
 # models['en'] = lambda: Perceptron('huge.json')
 
-##### ETC #########################################################################################
+###################################################################################################
 
 #---- LOG -----------------------------------------------------------------------------------------
 # Functions that access the internet must report the visited URL using the standard logging module.
@@ -365,7 +371,7 @@ def debug(file=sys.stdout, format=SIGNED, date='%H:%M:%S'):
 # request('https://textgain.com')
 # debug(False)
 
-##### ETC #########################################################################################
+###################################################################################################
 
 #---- UNICODE -------------------------------------------------------------------------------------
 # The u() function returns a Unicode string (Python 2 & 3).
@@ -402,9 +408,12 @@ def b(v, encoding='utf-8'):
         return v
     return (u'%s' % v).encode()
 
-##### ETC #########################################################################################
-
 #---- ITERATION -----------------------------------------------------------------------------------
+
+def slice(a, *ijn):
+    """ Returns an iterator of values from index i to j, by step n.
+    """
+    return list(itertools.islice(a, *ijn))
 
 def shuffled(a):
     """ Returns an iterator of values in the list, in random order.
@@ -1037,8 +1046,8 @@ class Bayes(Model):
 # capturing 'small words' such as pronouns, smileys, word suffixes (-ing)
 # and language-specific letter combinations (oeu, sch, tch, ...)
 
-URL = re.compile(r'(https?://[^\s]+)')
-REF = re.compile(r'([\w.]*@[\w.]+)', flags=re.U)
+URL = re.compile(r'https?://.*?(?=[,.!?)]*(?:\s|$))')
+REF = re.compile(r'[\w._\-]*@[\w._\-]+', flags=re.U)
 
 def chngrams(s, n=3):
     """ Returns an iterator of character n-grams.
@@ -1057,8 +1066,8 @@ def v(s, features=('ch3',)): # (vector)
         Can be used as Perceptron.train(v(s)) or predict(v(s)).
     """
    #s = s.lower()
-    s = re.sub(URL, '://', s)
-    s = re.sub(REF, '@**', s)
+    s = re.sub(URL, 'http://', s)
+    s = re.sub(REF, '@name', s)
     v = collections.Counter()
     v[''] = 1 # bias
     for f in features:
@@ -1597,12 +1606,12 @@ def detag(s):
             self.append(s)
         def handle_entityref(self, s):
             self.append('&')
-        def strip(self, s):
-            self.feed(s.replace('&', '&amp;'))
+        def __call__(self, s):
+            self.feed(u(s).replace('&', '&amp;'))
             self.close()
             return ''.join(self)
 
-    return Parser().strip(s)
+    return Parser()(s)
 
 # print(detag('<a>a</a>&<b>b</b>'))
 
@@ -1884,8 +1893,7 @@ class Sentence(list):
 
 TAGGER = LazyDict() # {'en': Model}
 
-for f in glob.glob(cd('*-pos.json')):
-    TAGGER[f.split('-')[-2][-2:]] = lambda: Perceptron.load(open(f))
+TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json')))
 
 def tag(s, language='en'):
     """ Returns the tokenized + tagged string.
@@ -2446,7 +2454,7 @@ def download(url, data={}, headers={}, timeout=10, delay=0, cached=False):
     """ Returns the content at the given URL, as a byte string.
     """
     k = re.sub(r'&?oauth_[\w=%-]+', '', url)
-    k = hashlib.sha1(b(k)).hexdigest()[:16]
+    k = hashlib.sha1(b(k)).hexdigest()[:20]
     k = os.path.join(CACHE, '%s.txt' % k)
 
     if not os.path.exists(CACHE):
@@ -2631,13 +2639,10 @@ class Twitter(object):
 
     def parse(self, v):
         def f(v):
-            v = v.get('extended_tweet', {}) \
-                 .get('full_text',          # 240 characters (stream)
-                v.get('full_text',          # 240 characters (search)
-                v.get('text', '')))         # 140 characters (< 2017)
-            v = v.replace('&amp;', '&')
-            v = v.replace('&lt;' , '<')
-            v = v.replace('&gt;' , '>')
+            v = decode(v.get('extended_tweet', {}) \
+                        .get('full_text',          # 240 characters (stream)
+                       v.get('full_text',          # 240 characters (search)
+                       v.get('text', ''))))        # 140 characters (< 2017)
             return v
 
         t = Tweet(
@@ -2898,7 +2903,8 @@ def mail(to, subject, message, relay=SMTP('', '', 'smtp.gmail.com:465')):
 
 # mail('grasp@mailinator.com', 'test', u'<b>Héllø</b>')
 
-###################################################################################################
+
+##### WWW #########################################################################################
 
 #---- DOM -----------------------------------------------------------------------------------------
 # The DOM or Document Object Model is a representation of a HTML document as a nested tree.
@@ -3311,7 +3317,7 @@ def plaintext(element, keep={}, ignore=set(('head', 'script', 'style', 'form')),
 # print(txt)
 
 def encode(s):
-    """ Returns a byte string with encoded entities.
+    """ Returns a string with encoded entities.
     """
     s = s.replace('&' , '&amp;' )
     s = s.replace('<' , '&lt;'  )
@@ -3320,16 +3326,21 @@ def encode(s):
     s = s.replace("'" , '&apos;')
    #s = s.replace('\n', '&#10;' )
    #s = s.replace('\r', '&#13;' )
-    s = b(s)
     return s
 
 def decode(s):
-    """ Returns a Unicode string with decoded entities.
+    """ Returns a string with decoded entities.
     """
-    s = b(s)
-    s = unescape(s)
-    s = urldecode(s)
-    s = u(s)
+    s = s.replace('&amp;'  , '&')
+    s = s.replace('&lt;'   , '<')
+    s = s.replace('&gt;'   , '>')
+    s = s.replace('&quot;' , '"')
+    s = s.replace('&apos;' , "'")
+    s = s.replace('&nbsp;' , ' ')
+   #s = s.replace('&#10;'  , '\n')
+   #s = s.replace('&#13;'  , '\r')
+    s = re.sub(r'https?://.*?(?=\s|$)', \
+        lambda m: urldecode(m.group()), s) # '%3A' => ':' (in URL)
     return s
 
 #---- NEWS ----------------------------------------------------------------------------------------
@@ -3403,7 +3414,7 @@ def article(url, cached=False, headers={'User-Agent': 'Grasp.py'}):
 #     print(title.upper() + '\n')
 #     print(text + '\n\n')
 
-##### DB ##########################################################################################
+###################################################################################################
 
 #---- DATE ----------------------------------------------------------------------------------------
 # The date() function attempts to parse a Date object from a string or timestamp (int/float).
@@ -3428,8 +3439,6 @@ class DateError(Exception):
 @printable
 class Date(datetime.datetime):
 
-    format = '%Y-%m-%d %H:%M:%S'
-
     # Date.year
     # Date.month
     # Date.day
@@ -3448,14 +3457,17 @@ class Date(datetime.datetime):
     def timestamp(self):
         return int(time.mktime(self.timetuple()))
 
-    def __add__(self, s):
-        return date(datetime.datetime.__add__(self, datetime.timedelta(seconds=s)))
-
-    def __sub__(self, s):
-        return date(datetime.datetime.__sub__(self, datetime.timedelta(seconds=s)))
+    def format(self, s):
+        return u(self.strftime(s))
 
     def __str__(self):
-        return self.strftime(self.format)
+        return self.strftime('%Y-%m-%d %H:%M:%S')
+
+    def __add__(self, i):
+        return date(datetime.datetime.__add__(self, datetime.timedelta(seconds=i)))
+
+    def __sub__(self, i):
+        return date(datetime.datetime.__sub__(self, datetime.timedelta(seconds=i)))
 
     def __repr__(self):
         return "Date(%s)" % repr(str(self))
@@ -3642,7 +3654,7 @@ class App(ThreadPoolMixIn, WSGIServer):
             'headers' : dict(headers(env)),
         })
 
-        # Set App.repsonse (thread-safe).
+        # Set App.response (thread-safe).
         r = self.response
         r.__dict__.update({
             'code'    : 200,
