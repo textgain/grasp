@@ -510,12 +510,15 @@ class table(list):
 
 class CSV(table):
 
-    def __init__(self, name='', separator=',', rows=[]):
+    def __init__(self, name='', separator=',', rows=[], n_cols=None):
         """ Returns the given .csv file as a list of rows, each a list of values.
         """
         try:
             self.name      = name
             self.separator = separator
+            # n_cols stores number of initial columns to be used in CSV matrix
+            # Default value is None, later is set to maximum number of cols.
+            self.n_cols = n_cols
             self._load()
         except IOError:
             pass # doesn't exist (yet)
@@ -525,8 +528,10 @@ class CSV(table):
     def _load(self):
         with open(self.name, 'r') as f:
             for r in csvlib.reader(f, delimiter=self.separator):
+                r = r[:self.n_cols] if self.n_cols else r
                 r = [u(v) for v in r]
                 self.append(r)
+            self.n_cols = len(self[0])
 
     def save(self, name=''):
         a = []
