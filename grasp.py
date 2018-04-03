@@ -75,6 +75,7 @@ import xml.etree.ElementTree as ElementTree
 import sqlite3 as sqlite
 import csv as csvlib
 import json
+import tempfile
 import glob
 import time
 import datetime
@@ -410,7 +411,7 @@ def b(v, encoding='utf-8'):
 
 #---- ITERATION -----------------------------------------------------------------------------------
 
-def slice(a, *ijn):
+def sliced(a, *ijn):
     """ Returns an iterator of values from index i to j, by step n.
     """
     return list(itertools.islice(a, *ijn))
@@ -467,6 +468,52 @@ def choice(a, p=[]):
 #     f[v] += 1
 # 
 # print(f)
+
+#---- FILE ----------------------------------------------------------------------------------------
+# Temporary files are useful when a function takes a filename, but we have the data in the file.
+
+class tmp(object):
+    
+    def __init__(self, s, mode='wb'):
+        """ Returns a named temporary file containing the given string.
+        """
+        self._f = tempfile.NamedTemporaryFile(mode, delete=False)
+        self._f.write(s)
+        self._f.close()
+
+    @property
+    def name(self):
+        return self._f.name
+
+    def read(self):
+        return self._f.read()
+
+    def write(self, *args):
+        return self._f.write(*args)
+
+    def close(self):
+        return self._f.close()
+
+    def __enter__(self):
+        return self._f
+
+    def __exit__(self, *args):
+        try: 
+            os.unlink(self._f.name)
+        except:
+            pass
+
+    def __del__(self):
+        try: 
+            os.unlink(self._f.name)
+        except:
+            pass
+
+# data = '"username", "tweet", "likes"\n'
+# 
+# with tmp(data) as f:
+#     for row in csv(f.name):
+#         print row
 
 ##### DB ##########################################################################################
 
@@ -1052,18 +1099,30 @@ REF = re.compile(r'[\w._\-]*@[\w._\-]+', flags=re.U)
 def chngrams(s, n=3):
     """ Returns an iterator of character n-grams.
     """
+    if inspect.isgenerator(s):
+        s = list(s)
     for i in range(len(s) - n + 1):
         yield s[i:i+n] # 'hello' => 'hel', 'ell', 'llo'
 
 def ngrams(s, n=2):
     """ Returns an iterator of word n-grams.
     """
-    for w in chngrams([w for w in re.split(r'\s+', s) if w], n):
+    if isinstance(s, basestring):
+        s = s.split()
+    for w in chngrams((w for w in s if w), n):
         yield tuple(w)
+
+def skipgrams(s, n=5):
+    """ Returns an iterator of (word, context)-tuples.
+    """
+    if isinstance(s, basestring):
+        s = s.split()
+    for i, w in enumerate(s):
+        yield w, tuple(s[max(0,i-n):i] + s[i+1:i+1+n])
 
 def v(s, features=('ch3',)): # (vector)
     """ Returns a set of character trigrams in the given string.
-        Can be used as Perceptron.train(v(s)) or predict(v(s)).
+        Can be used as Perceptron.train(v(s)) or .predict(v(s)).
     """
    #s = s.lower()
     s = re.sub(URL, 'http://', s)
@@ -1167,6 +1226,16 @@ def topn(p, n=10, reverse=False):
 # A robust evaluation of P/R is by K-fold cross-validation.
 # K-fold cross-validation takes a list of labeled examples,
 # and trains + tests K different models on different subsets of examples.
+
+def balanced(data=[], n=None):
+    """ Returns an iterator of (vector, label)-tuples,
+        with at most n of every label.
+    """
+    f = collections.Counter()
+    for v, label in data:
+        f[label] += 1
+        if n is None or f[label] <= n:
+            yield v, label
 
 def confusion_matrix(model, test=[]):
     """ Returns the matrix of labels x predicted labels, as a dict.
@@ -1400,10 +1469,10 @@ def knn(v, vectors=[], k=3, distance=cos):
     nn = list(nn)[:k]
     return nn
 
-def sparse(v):
+def sparse(v, tol=5):
     """ Returns a vector with non-zero weight features.
     """
-    return v.__class__({f: w for f, w in v.items() if w != 0})
+    return v.__class__({f: w for f, w in v.items() if round(w, tol) != 0})
 
 def tf(v):
     """ Returns a vector with normalized weights
@@ -1429,12 +1498,6 @@ def features(vectors=[]):
     """ Returns the set of features for all vectors.
     """
     return set().union(*vectors)
-
-def index(a=[], inverted=True):
-    if inverted:
-        return {v: i for i, v in enumerate(a)}
-    else:
-        return {i: v for i, v in enumerate(a)}
 
 def centroid(vectors=[]):
     """ Returns the mean vector for all vectors.
@@ -1535,30 +1598,66 @@ def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
 #     print(cluster) # cats vs dogs
 
 #---- VECTOR MATRIX -------------------------------------------------------------------------------
+# For performance, many algorithms for statistical analysis use NumPy arrays.
 
-def frank(vectors=[]):
-    """ Returns a (feature, index)-dict ranked by document frequency,
-        i.e., the feature that occurs in the most vectors has rank 0.
-    """
-    r = sum(map(collections.Counter, vectors), collections.Counter())
-    r = sorted(r, key=lambda f: (-r[f], f))
-    r = map(reversed, enumerate(r))
-    r = collections.OrderedDict(r)
-    return r
-
-# print(rankf([{'a': 0}, {'b': 1}, {'b': 1, 'c': 1}, {'c': 1}]))
-# {'b': 0, 'c': 1}
-
-def matrix(vectors=[], features={}):
-    """ Returns a 2D numpy.ndarray of the given vectors,
-        with the given (feature, index)-dict as columns.
+def matrix(vectors=[]):
+    """ Returns a 2D numpy.ndarray of the given vectors, 
+        with columns ordered by sorted(features(vectors).
     """
     import numpy
-    f = features or frank(vectors)
+
+    f = features(vectors)
+    f = sorted(f)
+    f = enumerate(f)
+    f = {v: i for i, v in f}
     m = numpy.zeros((len(vectors), len(f)))
     for v, a in zip(vectors, m):
         a.put(map(f.__getitem__, v), v.values())
     return m
+
+class svd(list):
+    """ Returns a list of vectors, each with n concepts,
+        where each concept is a combination of features.
+        (Singular Value Decomposition)
+    """
+    def __init__(self, vectors=[], n=2):
+        import numpy
+
+        f  = dict(enumerate(sorted(features(vectors))))
+        m  = matrix(vectors)
+        m -= numpy.mean(m, 0)
+        # u:  vectors x concepts
+        # v: concepts x features
+        u, s, v = numpy.linalg.svd(m, full_matrices=False)
+
+        self.extend(
+            sparse({   i  : w * abs(w) for i, w in enumerate(a) }) for a in u[:,:n]
+        )
+        self.concepts = tuple(
+            sparse({ f[i] : w * abs(w) for i, w in enumerate(a) }) for a in v[:n]
+        )
+        self.features = tf(
+            sparse({ f[i] : 1 * abs(w) for i, w in enumerate(numpy.dot(s[:n], v[:n]))
+        }))
+
+    @property
+    def cs(self):
+        return self.concepts
+
+    @property
+    def pc(self):
+        return self.features
+
+pca = svd # (Principal Component Analysis)
+
+# data = [
+#     {'x': 0.0, 'y': 1.1, 'z': 1.0},
+#     {'x': 0.0, 'y': 1.0, 'z': 0.0}
+# ]
+# 
+# print(svd(data, n=2))
+# print(svd(data, n=2).cs[0])
+# print(svd(data, n=1).pc)
 
 ##### NLP #########################################################################################
 
@@ -1816,8 +1915,9 @@ def tokenize(s, language='en', known=[]):
 def wc(s):
     """ Returns a (word, count)-dict, lowercase.
     """
-    f = re.split(r'\s+', s.lower())
-    f = collections.Counter(f)
+    s = s.lower()
+    s = s.split()
+    f = collections.Counter(s)
     return f
 
 # print(wc(tokenize('The cat sat on the mat.')))
@@ -2415,6 +2515,11 @@ cookies = cookielib.CookieJar()
 def request(url, data={}, headers={}, timeout=10):
     """ Returns a file-like object to the given URL.
     """
+    if isinstance(data, dict):
+        if headers.get('Content-Type') == 'application/json':
+            data = json.dumps(data)
+        else:                            # application/x-www-form-urlencoded
+            data = urlencode(data)
 
     if cookies is not None:
         f = urllib2.HTTPCookieProcessor(cookies)
@@ -2422,7 +2527,7 @@ def request(url, data={}, headers={}, timeout=10):
     else:
         f = urllib2.build_opener()
     try:
-        f = f.open(Request(url, urlencode(data) if data else None, headers), timeout=timeout)
+        f = f.open(Request(url, data or None, headers), timeout=timeout)
 
     except URLError as e:
         status = getattr(e, 'code', None) # HTTPError
@@ -2470,6 +2575,8 @@ def download(url, data={}, headers={}, timeout=10, delay=0, cached=False):
 
     with open(k, 'rb') as f:
         return f.read()
+
+dl = download
 
 # print(u(download('http://textgain.com')))
 
@@ -2528,7 +2635,7 @@ def sniff(url, *args, **kwargs):
 
 keys = {
     'Bing'   : '4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yBP5o',
-    'Google' : 'AIzaSyBxe9jC4WLr-Rry_5OUMOZ7PCsEyWpiU48'
+    'Google' : 'AIzaSyBYaRL9drwBEjG_ASQbtITbLFMCi90u1ec'
 }
 
 Result = collections.namedtuple('Result', ('url', 'text'))
@@ -2602,7 +2709,7 @@ def translate(q, source='', target='en', delay=1, cached=False, key=None):
     r  = 'https://www.googleapis.com/language/translate/v2?'
     r +=('&source=%s' % source) if source else ''
     r += '&target=%s' % target
-    r += '&key=%s'    % key
+    r += '&key=%s'    % (key or keys['Google'])
     r += '&q=%s'      % urlquote(b(q[:1000]))
     r  = download(r, delay=delay, cached=cached)
     r  = json.loads(u(r))
@@ -2615,6 +2722,41 @@ setattr(google, 'search'   , search   )
 setattr(google, 'translate', translate)
 
 # print(google.translate('De zwarte kat zat op de mat.', source='nl', key='***'))
+
+#---- ANNOTATE ------------------------------------------------------------------------------------
+
+Annotation = collections.namedtuple('Annotation', ('text', 'language', 'tags'))
+
+def annotate(path, key=None):
+    ''' Returns the image annotations.
+    '''
+    with open(path, 'rb') as f:
+        s = base64.b64encode(f.read())
+        s = {'requests': [
+                {'image': {'content': s}, 'features': [
+                    {'type' :  'TEXT_DETECTION'}, 
+                    {'type' : 'LABEL_DETECTION'}
+                ]}
+            ]}
+
+    r  = 'https://vision.googleapis.com/v1/images:annotate?'
+    r += 'key=%s' % (key or keys['Google'])
+    r  = download(r, data=s, headers={'Content-Type': 'application/json'})
+    r  = json.loads(u(r))
+    r  = r.get('responses', [{}])[0]
+    r1 = r.get('textAnnotations', ({},))[0]
+    r2 = r.get('labelAnnotations', ())
+
+    return Annotation(
+        r1.get('description', ''),
+        r1.get('locale', ''),
+        {r['description']: round(r['score'], 2) for r in r2}
+    )
+
+setattr(google, 'annotate', annotate)
+
+# with tmp(download('http://goo.gl/5GTvTe')) as f:
+#     print(google.annotate(f.name))
 
 #---- TWITTER -------------------------------------------------------------------------------------
 # Using u(), oauth(), request() and stream() we can define a Twitter class.
