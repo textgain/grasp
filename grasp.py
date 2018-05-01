@@ -414,7 +414,7 @@ def b(v, encoding='utf-8'):
 def sliced(a, *ijn):
     """ Returns an iterator of values from index i to j, by step n.
     """
-    return list(itertools.islice(a, *ijn))
+    return iter(itertools.islice(a, *ijn))
 
 def shuffled(a):
     """ Returns an iterator of values in the list, in random order.
@@ -2566,13 +2566,18 @@ def download(url, data={}, headers={}, timeout=10, delay=0, cached=False):
         os.makedirs(CACHE)
     if not os.path.exists(k) \
     or not cached:
-        s = request(url, data, headers, timeout).read()
-        with open(k, 'wb') as f:
-            f.write(s)
+        s = request(url, data, headers, timeout)
+        s = s.read()
+        if cached:
+            with open(k, 'wb') as f:
+                f.write(s)
 
-        time.sleep(max(0, download.ready - time.time())) # rate limiting
-        download.ready = time.time() + delay
+    # Rate limiting:
+    time.sleep(max(0, download.ready - time.time()))
+    download.ready = time.time() + delay
 
+    if not cached:
+        return s
     with open(k, 'rb') as f:
         return f.read()
 
@@ -2725,32 +2730,38 @@ setattr(google, 'translate', translate)
 
 #---- ANNOTATE ------------------------------------------------------------------------------------
 
-Annotation = collections.namedtuple('Annotation', ('text', 'language', 'tags'))
+Annotation = collections.namedtuple('Annotation', ('text', 'language', 'tags', 'location'))
 
-def annotate(path, key=None):
-    ''' Returns the image annotations.
+def annotate(path, delay=1, key=None):
+    ''' Returns the image annotation.
     '''
     with open(path, 'rb') as f:
         s = base64.b64encode(f.read())
         s = {'requests': [
                 {'image': {'content': s}, 'features': [
-                    {'type' :  'TEXT_DETECTION'}, 
-                    {'type' : 'LABEL_DETECTION'}
+                    {'type' :     'TEXT_DETECTION'},
+                    {'type' :    'LABEL_DETECTION'},
+                    {'type' : 'LANDMARK_DETECTION'},
                 ]}
             ]}
 
     r  = 'https://vision.googleapis.com/v1/images:annotate?'
     r += 'key=%s' % (key or keys['Google'])
-    r  = download(r, data=s, headers={'Content-Type': 'application/json'})
+    r  = download(r, data=s, headers={'Content-Type': 'application/json'}, delay=delay)
     r  = json.loads(u(r))
-    r  = r.get('responses', [{}])[0]
-    r1 = r.get('textAnnotations', ({},))[0]
-    r2 = r.get('labelAnnotations', ())
+    r  = r.get('responses'           , [{}])[0]
+    r1 = r.get('textAnnotations'     , [{}])[0]
+    r2 = r.get('labelAnnotations'    , [])      # lower
+    r3 = r.get('landmarkAnnotations' , [])      # Title
+    r4 = r.get('landmarkAnnotations' , [{}])[0] \
+          .get('locations'           , [{}])[0] \
+          .get('latLng')
 
     return Annotation(
-        r1.get('description', ''),
+        r1.get('description', '').strip(),
         r1.get('locale', ''),
-        {r['description']: round(r['score'], 2) for r in r2}
+        {w['description']: round(w['score'], 2) for w in r2 + r3},
+        (r4['latitude'], r4['longitude']) if r4 else None
     )
 
 setattr(google, 'annotate', annotate)
@@ -2886,6 +2897,30 @@ class Twitter(object):
 
         for v in set(re.findall(r'screen-name="(.*?)"', r.get('htmlUsers', ''))):
             yield v
+
+    def profile(self, q, delay=1.0, cached=False, key=None):
+        """ Returns the username's (name, text, language, location, date, photo, followers, tweets).
+        """
+        k = key or keys['Twitter']
+        r = 'https://api.twitter.com/1.1/users/show.json', {
+            'screen_name' : q
+        }
+        r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+        r = serialize(*r)
+        r = download(r, delay=delay, cached=cached) # 900 requests / 15 minutes
+        r = json.loads(u(r))
+
+        return (
+           #r.get('id_str', '')
+            r.get('name', ''),
+            r.get('description', ''),
+            r.get('lang', ''),
+            r.get('location', ''),
+            r.get('created_at'),
+            r.get('profile_image_url', ''),
+            r.get('followers_count', 0),
+            r.get('statuses_count', 0)
+        )
 
     def __call__(self, *args, **kwargs):
         return self.search(*args, **kwargs)

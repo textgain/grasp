@@ -73,6 +73,12 @@ assert   list(constituents(s1))[1][1]              == u'VP'
 assert   list(constituents(s1))[2][1]              == u'NP'
 assert   list(constituents(s1))[3][1]              == u''
 
+assert list( chngrams('cats', 2))                  == ['ca', 'at', 'ts']
+assert list(   ngrams(('cats', '&', 'dogs'), 2))   == [('cats', '&'), ('&', 'dogs')]
+assert list(   ngrams('cats & dogs', 2))           == [('cats', '&'), ('&', 'dogs')]
+assert list(skipgrams('cats & dogs', 1))           == [('cats', ('&',)), ('&', ('cats', 'dogs')), 
+                                                       ('dogs', ('&',))]
+
 e1 = DOM('<div id="main"><div class="story"><p>1</p><p>2</p></div</div>')
 e2 = DOM('<div><a href="http://www.site.com">x</a></div>')
 
