@@ -555,6 +555,8 @@ class table(list):
 # print(t[:,0])   # [1, 4, 7]
 # print(t[:2,:2]) # [[1, 2], [4, 5]]
 
+csvlib.field_size_limit(1000000000)
+
 class CSV(table):
 
     def __init__(self, name='', separator=',', rows=[]):
@@ -570,7 +572,7 @@ class CSV(table):
             self.extend(rows)
 
     def _load(self):
-        with open(self.name, 'r') as f:
+        with open(self.name, 'rU') as f:
             for r in csvlib.reader(f, delimiter=self.separator):
                 r = [u(v) for v in r]
                 self.append(r)
@@ -1851,7 +1853,7 @@ def tokenize(s, language='en', known=[]):
 
     # Find tokens w/ punctuation (URLs, numbers, ...)
     w  = set(known)
-    w |= set(re.findall(r'https?://.*?(?:\s|$)', s))                      # http://...
+    w |= set(re.findall(r'https?\://.*?(?:\s|$)', s))                      # http://...
     w |= set(re.findall(r'(?:\s|^)((?:[A-Z]\.)+[A-Z]\.?)', s))            # U.S.
     w |= set(re.findall(r'(?:\s|^)([A-Z]\. )(?=[A-Z])', s))               # J. R. R. Tolkien
     w |= set(re.findall(r'(\d+[\.,:/″][\d\%]+)', s))                      # 1.23
@@ -1859,6 +1861,8 @@ def tokenize(s, language='en', known=[]):
     w |= abbreviations.get(language, set())                               # etc.
     w |=  contractions.get(language, set())                               # 're
     w  = '|'.join(f(p, r' \\\1 ', w).replace('  ', ' ') for w in w)
+    w  = w.replace('*', '\\*')
+    w  = w.replace('+', '\\+')
     e1 = _RE_EMO1
     e2 = _RE_EMO2
 
@@ -1887,6 +1891,8 @@ def tokenize(s, language='en', known=[]):
     # Split sentences:
     s = f(r'\r+', '\n', s)
     s = f(r'\n+', '\n', s)
+    s = f(u' \n', '\n', s)
+    s = f(u'\n ', '\n', s)
     s = f(u' ([….?!]) (?!=[….?!])', ' \\1\n', s)                          # .\n
     s = f(u'\n([’”)]) ', ' \\1\n', s)                                     # “Wow.”
     s = f(r'\n((#\w+) ?) ', ' \\1\n', s)                                  #  Wow! #nice
@@ -1907,6 +1913,8 @@ def tokenize(s, language='en', known=[]):
             s[j] = s[j][2:]
 
     return '\n'.join(s).strip()
+
+tok = tokenize
 
 # s = u"RT @user: Check it out... 😎 (https://www.textgain.com) #Textgain cat.jpg"
 # s = u"There's a sentence on each line, each a space-separated string of tokens (i.e., words). :)"
@@ -1934,7 +1942,7 @@ def wc(s):
 # and their context (e.g., a determiner is often followed by an adjective or a noun).
 
 def ctx(*w):
-    """ Returns the given [token, tag] list parameters as 
+    """ Returns the given (token, tag) list parameters as 
         a context vector (i.e., token, tokens left/right) 
         that can be used to train a part-of-speech tagger.
     """
@@ -1953,7 +1961,7 @@ def ctx(*w):
             v.add('? %+d %s' % (i, tag   ))  # token tag
     return v
 
-# print(ctx(['The', 'DET'], ['cat', 'NOUN'], ['sat', 'VERB'])) # context of 'cat'
+# print(ctx(('The', 'DET'), ('cat', 'NOUN'), ('sat', 'VERB'))) # context of 'cat'
 #
 # set([
 #     ' '        , 
@@ -1967,28 +1975,28 @@ def ctx(*w):
 # ])
 
 @printable
-class Sentence(list):
+class Text(list):
 
     def __init__(self, s=''):
-        """ Returns the tagged sentence as a list of [token, tag]-values.
+        """ Returns the tagged string as a list of (token, tag)-tuples.
         """
         if isinstance(s, list):
             list.__init__(self, s)
         if isinstance(s, (str, unicode)) and s:
             for w in s.split(' '):
                 w = u(w)
-                w = re.split(r'(?<!\\)/', w + '/')[:2]
-                w = [w.replace('\/', '/') for w in w]
+                w = w.rsplit('/', 1)
+                w = tuple(w)
                 self.append(w)
 
     def __str__(self):
-        return ' '.join('/'.join(w.replace('/', '\\/') for w in w) for w in self)
+        return ' '.join('/'.join(w) for w in self)
 
     def __repr__(self):
-        return 'Sentence(%s)' % repr(u(self))
+        return 'Text(%s)' % repr(u(self))
 
 # s = 'The/DET cat/NOUN sat/VERB on/PREP the/DET mat/NOUN ./PUNC'
-# for w, tag in Sentence(s):
+# for w, tag in Text(s):
 #     print(w, tag)
 
 TAGGER = LazyDict() # {'en': Model}
@@ -1996,27 +2004,34 @@ TAGGER = LazyDict() # {'en': Model}
 TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json')))
 
 def tag(s, language='en'):
-    """ Returns the tokenized + tagged string.
+    """ Returns the tagged string as a list of (token, tag)-tuples.
     """
-    return '\n'.join(u(s) for s in parse(s, language))
+    m = TAGGER[language]
+    a = s.split()
+    a.insert(0, '')
+    a.insert(0, '')
+    a.append('')
+    a.append('')
+    a = [[w, ''] for w in a]
+    for w in nwise(a, n=5):
+        tag = m.predict(ctx(*w)) # {tag: probability}
+        tag = top(tag)           # (tag, probability)
+        tag = tag[0]
+        w[2][1] = tag
+    a = a[2:-2]
+    a = map(tuple, a)
+    a = list(a)
+    a = Text(a)
+    return a
 
-def parse(s, language='en'):
-    """ Returns the tokenized + tagged string,
-        as an iterator of Sentence objects.
+def parse(s, language='en', tokenize=tokenize):
+    """ Returns the tagged string as an iterator of Text objects,
+        where each Text is a sentence.
     """
-    model = TAGGER[language]
     s = tokenize(s)
-    s = s.replace('/', '\\/')
     s = s.split('\n')
     for s in s:
-        a = Sentence()
-        for w in nwise(Sentence('  %s  ' % s), n=5):
-            if len(a) > 1:
-                w[0][1] = a[-2][1] # use predicted tag left
-                w[1][1] = a[-1][1]
-            tag, p = top(model.predict(ctx(*w)))
-            a.append([w[2][0], tag])
-        yield a
+        yield tag(s, language)
 
 # for s in parse("We're all mad here. I'm mad. You're mad."):
 #     print(repr(s))
@@ -2076,7 +2091,7 @@ def universal(w, tag, tagset=WEB):
 
 # data = []
 # for s in corpus:
-#     for w in nwise(Sentence('  %s  ' % s), n=5):
+#     for w in nwise(Text('/ / %s / /' % s), n=5):
 #         w = [universal(*w) for w in w]
 #         data.append((ctx(*w), w[2][1]))
 # 
@@ -2125,15 +2140,15 @@ inflections = {
     'do'   : r"do|does|did|doing"
 }
 
-class Phrase(Sentence):
+class Phrase(Text):
 
     def __repr__(self):
         return 'Phrase(%s)' % repr(u(self))
 
 _RE_TAG = '|'.join(map(re.escape, TAG)) # NAME|NOUN|\:\)|...
 
-def chunk(pattern, sentence, replace=[]):
-    """ Yields an iterator of matching Phrase objects from the given Sentence.
+def chunk(pattern, text, replace=[]):
+    """ Yields an iterator of matching Phrase objects found in the given Text.
         The search pattern is a sequence of tokens (talk-, -ing), tags (VERB),
         token/tags (-ing/VERB), escaped characters (:\)), control characters: 
         - ^ $ begin/end
@@ -2189,7 +2204,7 @@ def chunk(pattern, sentence, replace=[]):
         p.append(w)
 
     p = '(%s)' % ''.join(p)
-    for m in re.finditer(p, '%s ' % sentence, re.I):
+    for m in re.finditer(p, '%s ' % text, re.I):
         m = (m.strip() for m in m.groups() if m)
         m = map(Phrase, m)
         m = tuple(m)
@@ -2200,27 +2215,27 @@ def chunk(pattern, sentence, replace=[]):
 
 # for m in \
 #   chunk('ADJ', 
-#     tag('A big, black cat.')):
+#     tag(tok('A big, black cat.'))):
 #      print(u(m))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag("The cats'll be hungry.")): 
+#     tag(tok("The cats'll be hungry."))): 
 #     print(u(g1), u(g2))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag("The boss'll be angry!")):
+#     tag(tok("The boss'll be angry!"))):
 #     print(u(g1), u(g2))
 
 # for m, g1, g2, g3 in \
 #   chunk('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
-#     tag("Cats are more stubborn than dogs.")):
+#     tag(tok("Cats are more stubborn than dogs."))):
 #     print(u(g1), u(g2), u(g3))
 
-def constituents(sentence, language='en'):
-    """ Yields an iterator of (Phrase, tag)-tuples from the given Sentence,
-        with tags NP (noun phrase), VP (verb phrase), AP (adjective phrase)
+def constituents(text, language='en'):
+    """ Yields an iterator of (Phrase, tag)-tuples in the given tagged Text,
+        with tags NP (noun phrase), VP (verb phrase), AP (adjective phrase) 
         or PP (prepositional phrase).
     """
     if language in ('da', 'de', 'en', 'nl', 'no', 'sv'): # Germanic
@@ -2232,7 +2247,7 @@ def constituents(sentence, language='en'):
              ('PP' , 'PREP+'),
              (  '' , '-')
         )
-    s = u(sentence)
+    s = u(text)
     s = re.sub(r'\s+', ' ', s)
     while s:
         for tag, p in P:
