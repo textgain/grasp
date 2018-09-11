@@ -1060,7 +1060,7 @@ class Bayes(Model):
         self.weights = collections.defaultdict(dict)
 
         for v, label in examples:
-                self.train(v, label)
+            self.train(v, label)
 
     def train(self, v, label=None):
         for f in v:
@@ -1087,6 +1087,85 @@ class Bayes(Model):
         s = sum(p.values()) or 1
         for label in p:
             p[label] /= s
+        return p
+
+#---- DECISION TREE --------------------------------------------------------------------------------
+# The Decision Tree model is very easy to interpret (but it trains very slow).
+# It is based on a directed graph with features as nodes and labels as leaves.
+
+# The training data is recursively partitioned into subsets (edges)
+# where the left branch has a feature and the right branch has not.
+# Which feature to split next is decided by a cost function (gini).
+
+def gini(data=[]):
+    """ Returns the diversity of data labels (0.0-1.0).
+    """
+    p = collections.Counter(label for v, label in data)
+    n = len(data)
+    n = float(n or 1)
+    g = 1 - sum(pow(i / n, 2) for i in p.values())
+    return g
+
+# print(gini([({}, 'cat'), ({}, 'cat')])) # 0.0
+# print(gini([({}, 'cat'), ({}, 'dog')])) # 0.5
+
+class DecisionTree(Model):
+
+    def __init__(self, examples=[], **kwargs):
+        """ Decision Tree learning algorithm.
+        """
+        examples = list(examples)
+
+        count = lambda data: collections.Counter(label for v, label in data)
+
+        def split(data, min=2, depth=10, cost=gini):
+            n = None
+            for f in features(v for v, label in data):
+                Y = []
+                N = []
+                for v, label in data:
+                    if f in v:
+                        Y.append((v, label))
+                    else:
+                        N.append((v, label))
+                g = cost(Y) * len(Y) / len(data) \
+                  + cost(N) * len(N) / len(data)
+                if not n or n[4] > g:
+                  # n[0]: feature
+                  # n[1]: vectors w/  feature
+                  # n[2]: vectors w/o feature
+                  # n[3]: sample size
+                  # n[4]: cost (gini)
+                    n = [f, Y, N, len(data), g]
+
+            if n is None:
+                return count(data)
+            if len(data) < min:
+                return count(data)
+            if depth == 0 or n[4] == 0:
+                n[1] = count(n[1])
+                n[2] = count(n[2])
+            else:
+                n[1] = split(n[1], min, depth-1, cost)
+                n[2] = split(n[2], min, depth-1, cost)
+            return n
+
+        self.labels = count(examples)
+        self.root   = split(examples, **kwargs)
+
+    def predict(self, v):
+        """ Returns a dict of (label, probability)-items.
+        """
+        n = self.root
+        while isinstance(n, list):
+            if n[0] in v:
+                n = n[1]
+            else:
+                n = n[2]
+
+        p = dict.fromkeys(self.labels, 0.0)
+        p.update(n)
+        p = freq(p)
         return p
 
 #---- FEATURES ------------------------------------------------------------------------------------
@@ -1442,6 +1521,12 @@ class calibrate(Model):
 # Another measure of similarity is the angle between two vectors (cosine).
 # This works well for text features.
 
+def index(data=[]):
+    """ Returns a dict of (id(vector), label)-items
+        for the given list of (vector, label)-tuples.
+    """
+    return {id(v): label for v, label in data}
+
 def distance(v1, v2):
     """ Returns the distance of the given vectors.
     """
@@ -1449,7 +1534,6 @@ def distance(v1, v2):
 
 def dot(v1, v2):
     """ Returns the dot product of the given vectors.
-        Each vector is a dict of (feature, weight)-items.
     """
     return sum(v1.get(f, 0.0) * w for f, w in v2.items())
 
@@ -1474,7 +1558,17 @@ def knn(v, vectors=[], k=3, distance=cos):
 def sparse(v, tol=5):
     """ Returns a vector with non-zero weight features.
     """
-    return v.__class__({f: w for f, w in v.items() if round(w, tol) != 0})
+    return {f: w for f, w in v.items() if round(w, tol) != 0}
+
+def onehot(v): # {'age': '25+'} => {('age', '25+'): 1}
+    """ Returns a vector with non-categorical features.
+    """
+    return dict((f, w) if isinstance(w, (int, float)) else ((f, w), 1) for f, w in v.items())
+
+def reduce(v, features=set()):
+    """ Returns a vector without the given features.
+    """
+    return {f: w for f, w in v.items() if f not in features}
 
 def tf(v):
     """ Returns a vector with normalized weights
@@ -1482,19 +1576,19 @@ def tf(v):
     """
     n = sum(v.values())
     n = float(n or 1)
-    return v.__class__({f: w / n for f, w in v.items()})
+    return {f: w / n for f, w in v.items()}
 
 def tfidf(vectors=[]):
     """ Returns an iterator of vectors with normalized weights
         (term frequency–inverse document frequency).
     """
-    df = collections.Counter() # stopwords have higher df (the, or, I, ...)
+    df = collections.Counter() # stopwords have higher df (I, the, or, ...)
     if not isinstance(vectors, list):
         vectors = list(vectors)
     for v in vectors:
         df.update(v)
     for v in vectors:
-        yield v.__class__({f: w / float(df[f] or 1) for f, w in v.items()})
+        yield {f: w / float(df[f] or 1) for f, w in v.items()}
 
 def features(vectors=[]):
     """ Returns the set of features for all vectors.
@@ -1507,6 +1601,13 @@ def centroid(vectors=[]):
     v = list(vectors)
     n = float(len(v))
     return {f: sum(v.get(f, 0) for v in v) / n for f in features(v)}
+
+def freq(a):
+    """ Returns the relative frequency distribution of items in the list.
+    """
+    f = collections.Counter(a)
+    f = collections.Counter(tf(f))
+    return f
 
 def majority(a, default=None):
     """ Returns the most frequent item in the given list (majority vote).
@@ -1525,14 +1626,13 @@ def majority(a, default=None):
 #     ("'I know some new tricks,' said the cat in the hat."   , 'seuss'),
 #     ("They roared their terrible roars"                     , 'sendak'),
 #     ("They gnashed their terrible teeth"                    , 'sendak'),
-#     
 # ]
 # 
 # v, labels = zip(*examples) # = unzip
 # v = list(wc(tokenize(v)) for v in v)
 # v = list(tfidf(v))
 # 
-# labels = {id(v): label for v, label in zip(v, labels)} # { vector id: label }
+# labels = index(zip(v, labels)) # { vector id: label }
 # 
 # x = wc(tokenize('They rolled their terrible eyes'))
 # x = wc(tokenize("'Look at me! Look at me now!' said the cat."))
@@ -1951,14 +2051,16 @@ def ctx(*w):
     for i, (w, tag) in enumerate(w):
         i -= m
         if i == 0:
-            v.add(' ')                       # bias
-            v.add('1 %+d %s' % (i, w[:+1]))  # capitalization
-            v.add('* %+d %s' % (i, w[-6:]))  # token
-            v.add('^ %+d %s' % (i, w[:+3]))  # token head
-            v.add('$ %+d %s' % (i, w[-3:]))  # token suffix
+            v.add(' ')                                 # bias
+            v.add('. %+d %i' % (i,  not w.isalpha()))  # punctuation
+            v.add('@ %+d %i' % (i, w[:+1].isupper()))  # capitalization
+            v.add('1 %+d %s' % (i, w[:+1]))
+            v.add('* %+d %s' % (i, w[-6:]))            # token
+            v.add('^ %+d %s' % (i, w[:+3]))            # token head
+            v.add('$ %+d %s' % (i, w[-3:]))            # token suffix
         else:
-            v.add('$ %+d %s' % (i, w[-3:]))  # token suffix left/right
-            v.add('? %+d %s' % (i, tag   ))  # token tag
+            v.add('$ %+d %s' % (i, w[-3:]))            # token suffix left/right
+            v.add('? %+d %s' % (i, tag   ))            # token tag
     return v
 
 # print(ctx(('The', 'DET'), ('cat', 'NOUN'), ('sat', 'VERB'))) # context of 'cat'
@@ -1967,15 +2069,18 @@ def ctx(*w):
 #     ' '        , 
 #     '$ -1 The' , 
 #     '? -1 DET' , 
+#     '. +0 0'   , 
+#     '@ +0 0'   , 
 #     '1 +0 c'   , 
 #     '* +0 cat' , 
 #     '^ +0 cat' , 
+#     '$ +0 cat' , 
 #     '$ +1 sat' , 
 #     '? +1 VERB', 
 # ])
 
 @printable
-class Text(list):
+class Tagged(list):
 
     def __init__(self, s=''):
         """ Returns the tagged string as a list of (token, tag)-tuples.
@@ -1993,15 +2098,30 @@ class Text(list):
         return ' '.join('/'.join(w) for w in self)
 
     def __repr__(self):
-        return 'Text(%s)' % repr(u(self))
+        return 'Tagged(%s)' % repr(u(self))
 
 # s = 'The/DET cat/NOUN sat/VERB on/PREP the/DET mat/NOUN ./PUNC'
-# for w, tag in Text(s):
+# for w, tag in Tagged(s):
 #     print(w, tag)
 
 TAGGER = LazyDict() # {'en': Model}
 
 TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json')))
+
+lexicon = { # top 10
+    'en': {
+        'a'    : 'DET' ,
+        'the'  : 'DET' ,
+        'I'    : 'PRON',
+        'it'   : 'PRON',
+        'be'   : 'VERB', 'are': 'VERB', 'am': 'VERB', 'is': 'VERB',
+        'have' : 'VERB', 'has': 'VERB', 
+        'in'   : 'PREP',
+        'to'   : 'PREP',
+        'of'   : 'PREP',
+        'and'  : 'CONJ',
+    }
+}
 
 def tag(s, language='en'):
     """ Returns the tagged string as a list of (token, tag)-tuples.
@@ -2012,7 +2132,7 @@ def tag(s, language='en'):
     a.insert(0, '')
     a.append('')
     a.append('')
-    a = [[w, ''] for w in a]
+    a = [[w, lexicon.get(language, {}).get(w, '')] for w in a]
     for w in nwise(a, n=5):
         tag = m.predict(ctx(*w)) # {tag: probability}
         tag = top(tag)           # (tag, probability)
@@ -2021,12 +2141,12 @@ def tag(s, language='en'):
     a = a[2:-2]
     a = map(tuple, a)
     a = list(a)
-    a = Text(a)
+    a = Tagged(a)
     return a
 
 def parse(s, language='en', tokenize=tokenize):
-    """ Returns the tagged string as an iterator of Text objects,
-        where each Text is a sentence.
+    """ Returns the tagged string as an iterator of sentences,
+        where each sentence is a list of (token, tag)-tuples.
     """
     s = tokenize(s)
     s = s.split('\n')
@@ -2091,7 +2211,7 @@ def universal(w, tag, tagset=WEB):
 
 # data = []
 # for s in corpus:
-#     for w in nwise(Text('/ / %s / /' % s), n=5):
+#     for w in nwise(Tagged('/ / %s / /' % s), n=5):
 #         w = [universal(*w) for w in w]
 #         data.append((ctx(*w), w[2][1]))
 # 
@@ -2140,7 +2260,7 @@ inflections = {
     'do'   : r"do|does|did|doing"
 }
 
-class Phrase(Text):
+class Phrase(Tagged):
 
     def __repr__(self):
         return 'Phrase(%s)' % repr(u(self))
@@ -2148,9 +2268,9 @@ class Phrase(Text):
 _RE_TAG = '|'.join(map(re.escape, TAG)) # NAME|NOUN|\:\)|...
 
 def chunk(pattern, text, replace=[]):
-    """ Yields an iterator of matching Phrase objects found in the given Text.
-        The search pattern is a sequence of tokens (talk-, -ing), tags (VERB),
-        token/tags (-ing/VERB), escaped characters (:\)), control characters: 
+    """ Yields an iterator of matching Phrase objects found in the tagged text.
+        The search pattern is a sequence of tokens (talk-, -ing), tags (VERB), 
+        token/tags (-ing/VERB), escaped characters (:\)) or control characters:
         - ^ $ begin/end
         - ( ) group
         -  |  options: NOUN|PRON CONJ|,
@@ -2215,26 +2335,26 @@ def chunk(pattern, text, replace=[]):
 
 # for m in \
 #   chunk('ADJ', 
-#     tag(tok('A big, black cat.'))):
+#     tag(tokenize('A big, black cat.'))):
 #      print(u(m))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag(tok("The cats'll be hungry."))): 
+#     tag(tokenize("The cats'll be hungry."))): 
 #     print(u(g1), u(g2))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag(tok("The boss'll be angry!"))):
+#     tag(tokenize("The boss'll be angry!"))):
 #     print(u(g1), u(g2))
 
 # for m, g1, g2, g3 in \
 #   chunk('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
-#     tag(tok("Cats are more stubborn than dogs."))):
+#     tag(tokenize("Cats are more stubborn than dogs."))):
 #     print(u(g1), u(g2), u(g3))
 
 def constituents(text, language='en'):
-    """ Yields an iterator of (Phrase, tag)-tuples in the given tagged Text,
+    """ Yields an iterator of (Phrase, tag)-tuples in the given tagged text,
         with tags NP (noun phrase), VP (verb phrase), AP (adjective phrase) 
         or PP (prepositional phrase).
     """
@@ -2315,6 +2435,7 @@ def sentiment(s, language='en'):
         from negative (-1.0) to positive (+1.0).
     """
     p = polarity.get(language, {})
+    s = u(s)
     s = s.lower()
     s = s.split()
     a = []
@@ -4190,7 +4311,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
         return len(self.incident(n))
 
     def copy(self):
-        g = self.__class__(directed=self._directed)
+        g = Graph(self._directed)
         g.update(self)
         return g
 
@@ -4225,7 +4346,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
     def sub(self, nodes=[]):
         """ Returns a graph with the given nodes, and connecting edges.
         """
-        g = self.__class__(directed=self._directed)
+        g = Graph(self._directed)
         for n in self.nodes:
             if n in nodes:
                 g.add(n)
@@ -4239,7 +4360,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
             nodes connected to this node (depth=1), 
             nodes connected to these nodes (depth=2), ...
         """
-        g = self.__class__(directed=self._directed)
+        g = Graph(self._directed)
         g.add(n)
         for i in range(depth):
             for e in [e for e in self.edges if not e in g and e.node1 in g or e.node2 in g]:
@@ -4274,11 +4395,14 @@ class Graph(dict): # { node id1: { node id2: edge }}
         from xml.sax.saxutils import escape
         s  = '<?xml version="1.0" encoding="utf-8"?>'
         s += '\n<graphml>'
-        s += '\n<key for="edge" id="weight" attr.name="weight" attr.type="float"/>'
+        s += '\n<key for="node" id="label" attr.name="label" attr.type="string"/>'
+        s += '\n<key for="edge" id="weight" attr.name="weight" attr.type="double"/>'
         s += '\n<key for="edge" id="type" attr.name="type" attr.type="string"/>'
-        s += '\n<graph edgedefault="%sdirected">' % ('un', '')[self._directed]
+        s += '\n<graph edgedefault="%sdirected">'   % ('un', '')[self._directed]
         for n in self.nodes:
-            s += '\n<node id="%s" />' % escape(n)
+            s += '\n<node id="%s">'                 % escape(n)
+            s += '\n\t<data key="label">%s</data>'  % escape(n)
+            s += '\n</node>'
         for e in self.edges:
             s += '\n<edge source="%s" target="%s">' % (escape(e.node1), escape(e.node2))
             s += '\n\t<data key="weight">%s</data>' % (e.weight)
@@ -4308,14 +4432,14 @@ class Graph(dict): # { node id1: { node id2: edge }}
 
 def union(g1, g2):
     # g1 | g2
-    g = g1.__class__(directed=g1.directed)
+    g = Graph(g1.directed)
     g.update(g1)
     g.update(g2)
     return g
 
 def intersection(g1, g2):
     # g1 & g2
-    g = g1.__class__(directed=g1.directed)
+    g = Graph(g1.directed)
     for n in g1.nodes:
         if n in g2 is True:
             g.add(n)
@@ -4325,7 +4449,7 @@ def intersection(g1, g2):
 
 def difference(g1, g2):
     # g1 - g2
-    g = g1.__class__(directed=g1.directed)
+    g = Graph(g1.directed)
     for n in g1.nodes:
         if n in g2 is False:
             g.add(n)

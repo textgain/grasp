@@ -70,9 +70,9 @@ Graph.default.update = function(obj) {
 	
 Graph.prototype.update = function(options) {
 	/* Updates node positions using a force-directed layout,
-	 * where nodes repulse nodes (k1) and edges attract (k2).
+	 * where nodes repulse nodes (f1) and edges attract (f2).
 	 */
-	var o = Graph.default.update(options || {}); // {k1: 6.0, k2: 0.02, m: 3.0}
+	var o = Graph.default.update(options || {}); // {f1: 10.0, f2: 0.5, m: 0.25}
 	var n = Object.keys(this.nodes);
 	for (var i=0; i < n.length; i++) {
 		for (var j=i+1; j < n.length; j++) {
@@ -148,7 +148,6 @@ Graph.prototype.render = function(ctx, x, y, options) {
 					x - (5.0 * Math.sin(a + 0.52)), 
 					y - (5.0 * Math.cos(a + 0.52)));
 			}
-			
 		}
 	}
 	ctx.lineWidth = o.strokewidth;

@@ -35,6 +35,8 @@ assert tokenize(u'"Citation." Next p.5'          ) == u'" Citation . "\nNext p. 
 assert tokenize(u'Hello.Hello! 20:10'            ) == u'Hello .\nHello !\n20:10'
 assert tokenize(u'pre-\ndetermined'              ) == u'predetermined'
 
+assert Tagged('//PUNC')                            == [('/', 'PUNC')]
+
 s1 = u"It/PRON 's/VERB my/PRON fresh/ADJ new/ADJ resumé/NOUN !/PUNC ;)/:)"
 s2 = u'1\/2/NUM'
 
