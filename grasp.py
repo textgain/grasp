@@ -874,8 +874,8 @@ def pw_ok(s1, s2):
 
 ##### ML ##########################################################################################
 
-#---- MODEL --------------------------------------------------------------------------------------
-# The Model base class is inherited by Perceptron, Bayes, ...
+#---- MODEL ---------------------------------------------------------------------------------------
+# The Model base class is inherited by Perceptron, NaiveBayes, DecisionTree, ...
 
 class Model(object):
 
@@ -888,18 +888,41 @@ class Model(object):
     def predict(self, v):
         raise NotImplementedError
 
+    # Model.save() writes a serialized JSON-string to a file-like.
+    # Model.load() deserializes it and returns the right subclass.
+    # Models that have attributes which can't be serialized, e.g.,
+    # ensembles, need to override the encoder and decoder methods.
+
     def save(self, f):
-        json.dump(self.__dict__, f)
+        m = self._encode(self) # {'class': 'Model', 'labels': {}}
+        m = json.dumps(m)
+        f.write(m)
 
     @classmethod
     def load(cls, f):
-        self = cls()
-        for k, v in json.load(f).items():
+        m = f.read()
+        m = json.loads(m)
+        m = globals().get(m.get('class'), cls)._decode(m)
+        return m
+
+    @classmethod
+    def _encode(cls, model):
+        """ Returns the given Model as a dict.
+        """
+        return dict(model.__dict__, **{'class': model.__class__.__name__})
+
+    @classmethod
+    def _decode(cls, dict):
+        """ Returns the given dict as a Model subclass.
+        """
+        m = dict.pop('class', None)
+        m = globals().get(m, cls)()
+        for k, v in dict.items():
             try:
-                getattr(self, k).update(v) # defaultdict?
+                getattr(m, k).update(v) # defaultdict?
             except:
-                setattr(self, k, v)
-        return self
+                setattr(m, k, v)
+        return m
 
 #---- PERCEPTRON ----------------------------------------------------------------------------------
 # The Perceptron or single-layer neural network is a supervised machine learning algorithm.
@@ -1049,7 +1072,7 @@ class Perceptron(Model):
 # So it depends on the frequency of big wolves, bad wolves,
 # other wolves, other big things, and other bad things.
 
-class Bayes(Model):
+class NaiveBayes(Model):
     
     def __init__(self, examples=[], **kwargs):
         """ Binomial Naive Bayes learning algorithm.
@@ -1089,6 +1112,8 @@ class Bayes(Model):
             p[label] /= s
         return p
 
+Bayes = NaiveBayes
+
 #---- DECISION TREE --------------------------------------------------------------------------------
 # The Decision Tree model is very easy to interpret (but it trains very slow).
 # It is based on a directed graph with features as nodes and labels as leaves.
@@ -1114,17 +1139,15 @@ class DecisionTree(Model):
     def __init__(self, examples=[], **kwargs):
         """ Decision Tree learning algorithm.
         """
-        examples = list(examples)
-
         count = lambda data: collections.Counter(label for v, label in data)
 
-        def split(data, min=2, depth=10, cost=gini):
+        def split(data, cost=gini, min=2, max=1e10, depth=100):
             n = None
-            for f in features(v for v, label in data):
+            for f in sliced(shuffled(features(v for v, label in data)), max):
                 Y = []
                 N = []
                 for v, label in data:
-                    if f in v:
+                    if v.get(f):
                         Y.append((v, label))
                     else:
                         N.append((v, label))
@@ -1146,8 +1169,8 @@ class DecisionTree(Model):
                 n[1] = count(n[1])
                 n[2] = count(n[2])
             else:
-                n[1] = split(n[1], min, depth-1, cost)
-                n[2] = split(n[2], min, depth-1, cost)
+                n[1] = split(n[1], cost, min, max, depth-1)
+                n[2] = split(n[2], cost, min, max, depth-1)
             return n
 
         self.labels = count(examples)
@@ -1167,6 +1190,77 @@ class DecisionTree(Model):
         p.update(n)
         p = freq(p)
         return p
+
+    @property
+    def graph(self):
+        """ Returns a Graph with split features as nodes.
+        """
+        g = Graph(directed=True)
+
+        u = {} # {id(node): breadth-first serial number}
+        q = [self.root]
+        while q:
+            n1 = q.pop()
+            for n2, e in (
+              (n1[1], 'Y'), 
+              (n1[2], 'N')):
+                i = u.setdefault(id(n1), len(u))
+                j = u.setdefault(id(n2), len(u))
+                if isinstance(n2, list):
+                    q.append(n2)
+                    n2 = {n2[0]: n2[3]}
+                for f, w in n2.items():
+                    k1 = '#%i %s' % (i, n1[0])
+                    k2 = '#%i %s' % (j, f)
+                    w /= float(self.root[3])
+                    # #1 meow -- Y 1.0 -> #2 cat
+                    # #1 meow -- N 0.0 -> #3 dog
+                    g.add(k1, k2, weight=w, type=e)
+        return g
+
+#---- DECISION TREE ENSEMBLE -----------------------------------------------------------------------
+# Multiple decision trees with majority vote consensus correct overfitting errors (lower variance).
+
+class DecisionTreeEnsemble(Model):
+
+    def __init__(self, examples=[], m=10, min=5, max=100, **kwargs):
+        """ Decision Tree ensemble (Random Forest algorithm).
+        """
+        self.labels = collections.Counter(label for v, label in examples)
+        self.trees  = []
+
+        for i in range(m):
+            # Breiman's algorithm.
+            # Random sample of features.
+            # Random sample of examples (with replacement).
+            t = [random.choice(examples) for e in examples]
+            t = DecisionTree(t, min=min, max=max, **kwargs)
+            self.trees.append(t)
+
+    def predict(self, v):
+        """ Returns a dict of (label, probability)-items.
+        """
+        p = collections.Counter()
+        for t in self.trees:
+            p += t.predict(v)
+        for k, v in p.items():
+            p[k] = v / len(self.trees)
+        p = {k: p.get(k, 0.0) for k in self.labels}
+        return p
+
+    @classmethod
+    def _encode(cls, m):
+        m = Model._encode(m)
+        m['trees'] = [DecisionTree._encode(t) for t in m['trees']]
+        return m
+
+    @classmethod
+    def _decode(cls, m):
+        m['trees'] = [DecisionTree._decode(t) for t in m['trees']]
+        m = Model._decode(m)
+        return m
+
+RandomForest = DecisionTreeEnsemble
 
 #---- FEATURES ------------------------------------------------------------------------------------
 # Character 3-grams are sequences of 3 successive characters: 'hello' => 'hel', 'ell', 'llo'.
@@ -1380,6 +1474,7 @@ def kfoldcv(Model, data=[], k=10, weighted=False, debug=False, **kwargs):
         x = data[i]
         y = data[:i] + data[i+1:]
         y = itertools.chain(*y)
+        y = list(y)
         m = Model(examples=y, **kwargs)
         f = confusion_matrix(m, test=x)
         for label, n in m.labels.items():
@@ -1641,7 +1736,7 @@ def majority(a, default=None):
 #     w = round(w, 2)
 #     print(w, labels[id(nn)])
 # 
-# print(majority(labels[id(nn)] for w, nn in knn(x, v, k=3)))
+# print(majority(labels[id(nn)] for w, nn in knn(x, v, k=3))):
 
 #---- VECTOR CLUSTERING ---------------------------------------------------------------------------
 # The k-means clustering algorithm is an unsupervised machine learning method
@@ -4036,29 +4131,31 @@ except socket.error:
 # Edges can have a weight, which is the cost or length of the path.
 # Edges can have a type, for example 'is-a' or 'is-part-of'.
 
-def dfs(g, n, f=lambda n: True, v=set()):
+def dfs(g, n1, f=lambda *e: True, v=set()):
     """ Depth-first search.
-        Calls f(n) on the given node, its adjacent nodes if True, and so on.
+        Calls f(n1, n2) on the given node, its adjacent nodes if True, and so on.
     """
-    v.add(n) # visited?
-    if f(n) != False:
-        for n in g.get(n, {}).keys():
-            if n not in v:
-                dfs(g, n, f, v)
+    v.add(n1) # visited?
+    for n2 in g.get(n1, {}):
+        if f(n1, n2) != False:
+            if not n2 in v:
+                dfs(g, n2, f, v)
 
-def bfs(g, n, f=lambda n: True, v=set()):
+def bfs(g, n1, f=lambda *e: True, v=set()):
     """ Breadth-first search (spreading activation).
-        Calls f(n) on the given node, its adjacent nodes if True, and so on.
+        Calls f(n1, n2) on the given node, its adjacent nodes if True, and so on.
     """
-    q = collections.deque([n])
+    q = collections.deque([n1])
     while q:
-        n = q.popleft()
-        if n not in v and f(n) != False:
-            q.extend(g.get(n, {}).keys())
-            v.add(n)
+        n1 = q.popleft()
+        v.add(n1)
+        for n2 in g.get(n1, {}):
+            if f(n1, n2) != False:
+                if not n2 in v:
+                    q.append(n2)
 
-# def visit(n):
-#     print(n)
+# def visit(n1, n2):
+#     print(n1, n2)
 # 
 # g = {
 #     'a': {'b': 1},
@@ -4430,32 +4527,52 @@ class Graph(dict): # { node id1: { node id2: edge }}
         )
         return g
 
-def union(g1, g2):
-    # g1 | g2
-    g = Graph(g1.directed)
-    g.update(g1)
-    g.update(g2)
+def leaves(g):
+    """ Returns the nodes with degree 1.
+    """
+    return set(n for n in g if len(g[n]) <= 1 and g.degree(n) == 1)
+
+def prune(g, degree=1, weight=None):
+    """ Returns a graph with nodes and edges of given degree and weight (or up).
+    """
+    g = g.copy()
+    for e in list(e for e in g.edges if e.weight < weight):
+        g.pop(*e[:2])
+    for n in list(n for n in g.nodes if g.degree(n) < degree):
+        g.pop(n)
     return g
 
-def intersection(g1, g2):
-    # g1 & g2
-    g = Graph(g1.directed)
-    for n in g1.nodes:
-        if n in g2 is True:
-            g.add(n)
-    for e in g1.edges:
-        if e in g2 is True:
-            g.add(*e)
+def union(A, B):
+    """ Returns a graph with nodes that are in A or B.
+    """
+    g = Graph(A.directed) # A | B
+    g.update(A)
+    g.update(B)
+    return g
 
-def difference(g1, g2):
-    # g1 - g2
-    g = Graph(g1.directed)
-    for n in g1.nodes:
-        if n in g2 is False:
+def intersection(A, B):
+    """ Returns a graph with nodes that are in A and B.
+    """
+    g = Graph(A.directed) # A & B
+    for n in A.nodes:
+        if n in B is True:
             g.add(n)
-    for e in g1.edges:
-        if e in g2 is False:
+    for e in A.edges:
+        if e in B is True:
             g.add(*e)
+    return g
+
+def difference(A, B):
+    """ Returns a graph with nodes that are in A but not in B.
+    """
+    g = Graph(A.directed) # A - B
+    for n in A.nodes:
+        if n in B is False:
+            g.add(n)
+    for e in A.edges:
+        if e in B is False:
+            g.add(*e)
+    return g
 
 # g = Graph(directed=False)
 # 
@@ -4500,7 +4617,7 @@ def visualize(g, **kwargs):
         '\tcanvas = document.getElementById(%(id)s);',
         '\tcanvas.graph = new Graph(adjacency);',
         '\tcanvas.graph.animate(canvas, %(n)s, {',
-        '\t\tdirected    : %s,' % f('directed', False),
+        '\t\tdirected    : %s,' % f('directed', g.directed),
         '\t\tfont        : %s,' % f('font', '10px sans-serif'),
         '\t\tfill        : %s,' % f('fill', '#fff'),
         '\t\tstroke      : %s,' % f('stroke', '#000'),
