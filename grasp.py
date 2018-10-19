@@ -559,23 +559,27 @@ csvlib.field_size_limit(1000000000)
 
 class CSV(table):
 
+    @classmethod
+    def rows(cls, path, separator=','):
+        """ Returns the given .csv file as an iterator of rows, 
+            where each row is a list of values.
+        """
+        with open(path, 'rU') as f:
+            for r in csvlib.reader(f, delimiter=separator):
+                yield [u(v) for v in r]
+
     def __init__(self, name='', separator=',', rows=[]):
-        """ Returns the given .csv file as a list of rows, each a list of values.
+        """ Returns the given .csv file as a list of rows, 
+            where each row is a list of values.
         """
         try:
             self.name      = name
             self.separator = separator
-            self._load()
+            self.extend(CSV.rows(name, separator))
         except IOError:
             pass # doesn't exist (yet)
         if rows:
             self.extend(rows)
-
-    def _load(self):
-        with open(self.name, 'rU') as f:
-            for r in csvlib.reader(f, delimiter=self.separator):
-                r = [u(v) for v in r]
-                self.append(r)
 
     def save(self, name=''):
         a = []
@@ -875,7 +879,26 @@ def pw_ok(s1, s2):
 ##### ML ##########################################################################################
 
 #---- MODEL ---------------------------------------------------------------------------------------
-# The Model base class is inherited by Perceptron, NaiveBayes, DecisionTree, ...
+# The Model base class is inherited by Perceptron, DecisionTree, ...
+
+# Different algorithms produce models with different properties.
+# Some are simple and fast, such as the probalistic Naive Bayes.
+# Some are complex and slow, such as Decision Trees.
+
+# Simple approaches have the risk of underfitting (= high bias).
+# Complex approaches have the risk of overfitting (= high variance).
+
+# Underfitting means that no patterns in the data are discovered.
+# Overfitting means that useless patterns (noise) are discovered.
+
+# Models that under/overfit do not generalize well to other data.
+
+# Some algorithms try to prevent overfitting (and lower variance)
+# for example by averaging weights (Perceptron) or with ensembles
+# of multiple submodels (Random Forest).
+
+# Some algorithms (Perceptron & Naive Bayes) use online learning,
+# meaning that they can be trained on-the-fly.
 
 class Model(object):
 
@@ -916,13 +939,23 @@ class Model(object):
         """ Returns the given dict as a Model subclass.
         """
         m = dict.pop('class', None)
-        m = globals().get(m, cls)()
+        m = globals().get(m, cls)() # 'Model' => Model
         for k, v in dict.items():
             try:
                 getattr(m, k).update(v) # defaultdict?
             except:
                 setattr(m, k, v)
         return m
+
+def binary(v, cutoff=0.0):
+    """ Returns an iterator of features with weight > cutoff.
+    """
+    # Models can be trained with a set or a dict of features
+    # but will ignore the weights in the dict, using 0 or 1.
+    if isinstance(v, dict):
+        return iter(f for f, w in v.items() if w > cutoff)
+    else:
+        return iter(v)
 
 #---- PERCEPTRON ----------------------------------------------------------------------------------
 # The Perceptron or single-layer neural network is a supervised machine learning algorithm.
@@ -1025,7 +1058,7 @@ class Perceptron(Model):
 
         guess, p = top(self.predict(v, normalize=False))
         if guess != label:
-            for f in v:
+            for f in binary(v):
                 # Error correction:
                 cumsum(label, f, +1, self._t)
                 cumsum(guess, f, -1, self._t)
@@ -1040,7 +1073,7 @@ class Perceptron(Model):
         t = float(self._t)
         for label, features in self.weights.items():
             n = 0
-            for f in v:
+            for f in binary(v):
                 if f in features:
                     w = features[f]
                     n = n + (w[1] + w[0] * (t - w[2])) / t
@@ -1086,7 +1119,7 @@ class NaiveBayes(Model):
             self.train(v, label)
 
     def train(self, v, label=None):
-        for f in v:
+        for f in binary(v):
             try:
                 self.weights[label][f] += 1
             except KeyError:
@@ -1099,7 +1132,7 @@ class NaiveBayes(Model):
         p = dict.fromkeys(self.labels, 0.0)
         for x in self.labels:
             n =  self.labels[x]
-            w = (self.weights[x].get(f, 0.1) / n for f in v)
+            w = (self.weights[x].get(f, 0.1) / n for f in binary(v))
             w = map(math.log, w) # prevent underflow
             w = sum(w)
             w = math.exp(w) 
@@ -1147,7 +1180,7 @@ class DecisionTree(Model):
                 Y = []
                 N = []
                 for v, label in data:
-                    if v.get(f):
+                    if f in v:
                         Y.append((v, label))
                     else:
                         N.append((v, label))
@@ -1173,14 +1206,18 @@ class DecisionTree(Model):
                 n[2] = split(n[2], cost, min, max, depth-1)
             return n
 
+        examples = [(set(binary(v)), label) for v, label in examples]
+
         self.labels = count(examples)
         self.root   = split(examples, **kwargs)
 
     def predict(self, v):
         """ Returns a dict of (label, probability)-items.
         """
+        v = set(binary(v))
+
         n = self.root
-        while isinstance(n, list):
+        while isinstance(n, list): # search
             if n[0] in v:
                 n = n[1]
             else:
@@ -1191,21 +1228,19 @@ class DecisionTree(Model):
         p = freq(p)
         return p
 
-    @property
     def graph(self):
         """ Returns a Graph with split features as nodes.
         """
         g = Graph(directed=True)
+        n = {} # {id(node): breadth-first unique int}
 
-        u = {} # {id(node): breadth-first serial number}
         q = [self.root]
         while q:
             n1 = q.pop()
-            for n2, e in (
-              (n1[1], 'Y'), 
-              (n1[2], 'N')):
-                i = u.setdefault(id(n1), len(u))
-                j = u.setdefault(id(n2), len(u))
+            for n2, e in ((n1[1], 'Y'), (n1[2], 'N')):
+                i = n.setdefault(id(n1), len(n))
+                j = n.setdefault(id(n2), len(n))
+
                 if isinstance(n2, list):
                     q.append(n2)
                     n2 = {n2[0]: n2[3]}
@@ -1213,9 +1248,7 @@ class DecisionTree(Model):
                     k1 = '#%i %s' % (i, n1[0])
                     k2 = '#%i %s' % (j, f)
                     w /= float(self.root[3])
-                    # #1 meow -- Y 1.0 -> #2 cat
-                    # #1 meow -- N 0.0 -> #3 dog
-                    g.add(k1, k2, weight=w, type=e)
+                    g.add(k1, k2, weight=w, type=e) # #1 meow -- Y 1.0 --> #2 cat
         return g
 
 #---- DECISION TREE ENSEMBLE -----------------------------------------------------------------------
@@ -1229,13 +1262,15 @@ class DecisionTreeEnsemble(Model):
         self.labels = collections.Counter(label for v, label in examples)
         self.trees  = []
 
-        for i in range(m):
+        for _ in range(m):
             # Breiman's algorithm.
             # Random sample of features.
             # Random sample of examples (with replacement).
             t = [random.choice(examples) for e in examples]
-            t = DecisionTree(t, min=min, max=max, **kwargs)
+           #t = DecisionTree(t, min=min, max=max, **kwargs)
             self.trees.append(t)
+
+        self.trees = list(parallel(DecisionTree, self.trees, min=min, max=max, **kwargs)) # faster
 
     def predict(self, v):
         """ Returns a dict of (label, probability)-items.
@@ -1606,6 +1641,71 @@ class calibrate(Model):
 # m = Model.load('sentiment.json')
 # m = calibrate(m, '+', data)
 
+#---- EXPLAINABILITY ------------------------------------------------------------------------------
+# Complex models can become "black boxes" with little insight into their decision-making process.
+# Even if they are very accurate, not being able to explain themself has legal and ethical risks.
+
+# The 1st line of defense is using test() with a holdout set that was not used for kfoldcv().
+# The 2nd line of defense is using fsel() and pp() to examine which features are influential.
+# If this includes features like "is" or "@name", then the model may be overfitting on noise.
+# Decision Tree ensembles handle noise but they're slow. Trees can be examined with .graph().
+
+# The 3rd line of defense is using explain() and hilite(), to inspect individual predictions.
+# This is useful during an error analysis: reviewing influential features in false positives.
+
+# The 4th line of defense is testing predictions with bias, e.g., "black woman" vs "white man".
+
+def explain(model, v):
+    """ Returns label, probability, and a (feature, weight)-dict.
+    """
+    label, p = top(model.predict(v))
+
+    v = dict.fromkeys(binary(v), 1)
+    w = {}
+    for f in v:
+        v[f] = 0
+        w[f] = p - model.predict(v)[label] # leave-one-out
+        v[f] = 1
+
+    n = sum(v for v in w.values() if v > 0) or 1
+    w = {k: v / n for k, v in w.items()}
+    w = collections.Counter(w)
+    return label, p, w
+
+# data = [
+#     (('woof',), 'dog'),
+#     (('meow',), 'cat')
+# ]
+# m = Perceptron(data)
+# print(explain(m, ('meow','purr')))
+
+YELLOW = '<span style="background: rgba(255, 255, 0, %.1f);">%s</span>'
+
+def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
+    """ Returns a string with markup for the given (word, weight)-dict.
+        By default, HTML simulates a yellow marker (opacity = 0.0-1.0).
+    """
+    a = [0 for ch in s]
+    for w, alpha in words.items():
+        w = re.escape(w)
+        w = re.compile(w, re.I)
+        for m in w.finditer(s):
+            for i in range(*m.span()):
+                if a[i] < alpha:
+                    a[i] = alpha # words can overlap
+    f = ''
+    i = 0
+    for a, g in itertools.groupby(a):
+        n = len(list(g))
+        w = s[i:i+n]
+        if a > 0:
+            w = format(w, a)
+        f += w
+        i += n
+    return f
+
+# print(hilite('loud meowing', {'loud': 1.0}))
+
 #---- VECTOR --------------------------------------------------------------------------------------
 # A vector is a {feature: weight} dict, with n features, or n dimensions.
 
@@ -1665,9 +1765,15 @@ def reduce(v, features=set()):
     """
     return {f: w for f, w in v.items() if f not in features}
 
+def normalize(v):
+    """ Returns a vector with normalized weights
+        (unit vector, sum to 1.0).
+    """
+    return tf(v)
+
 def tf(v):
     """ Returns a vector with normalized weights
-        (term frequency, sum to 1.0).
+        (term frequency).
     """
     n = sum(v.values())
     n = float(n or 1)
@@ -1701,7 +1807,7 @@ def freq(a):
     """ Returns the relative frequency distribution of items in the list.
     """
     f = collections.Counter(a)
-    f = collections.Counter(tf(f))
+    f = collections.Counter(normalize(f))
     return f
 
 def majority(a, default=None):
@@ -1833,7 +1939,7 @@ class svd(list):
         self.concepts = tuple(
             sparse({ f[i] : w * abs(w) for i, w in enumerate(a) }) for a in v[:n]
         )
-        self.features = tf(
+        self.features = normalize(
             sparse({ f[i] : 1 * abs(w) for i, w in enumerate(numpy.dot(s[:n], v[:n]))
         }))
 
