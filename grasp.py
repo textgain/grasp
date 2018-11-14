@@ -343,9 +343,9 @@ class LazyDict(collections.abc.MutableMapping):
 
 #---- LOG -----------------------------------------------------------------------------------------
 # Functions that access the internet must report the visited URL using the standard logging module.
-# See also: https://docs.python.org/2/library/logging.html
+# See also: https://docs.python.org/2/library/logging.html#logging.Formatter
 
-SIGNED = '%(time)s %(file)s:%(line)s %(function)s: %(message)s\n' # 12:59:59 grasp.py:1000 <module>
+SIGNED = '%(asctime)s %(filename)s:%(lineno)s %(funcName)s: %(message)s' # 12:59:59 grasp.py#1000
 
 log = logging.getLogger(__name__)
 log.level = logging.DEBUG
@@ -353,52 +353,24 @@ log.level = logging.DEBUG
 if not log.handlers:
     log.handlers.append(logging.NullHandler())
 
-class Log(collections.deque, logging.Handler):
-
-    def __init__(self, n=100, file=None, format=SIGNED, date='%Y-%m-%d %H:%M:%S'):
-        """ A list of n latest log messages, optionally with a file-like back-end.
-        """
-        collections.deque.__init__(self, maxlen=n)
-        logging.Handler.__init__(self)
-        log.handlers.append(self)
-
-        self.file   = file
-        self.format = format
-        self.date   = date
-
-    def emit(self, r):
-        r = {
-            'time' : r.created + r.relativeCreated,
-            'type' : r.levelname.lower(),
-         'message' : r.getMessage(),
-        'function' : r.funcName,
-          'module' : r.module,
-            'path' : r.pathname,
-            'file' : r.filename,
-            'line' : r.lineno,
-        }
-        if self.file:
-            self.file.write(
-                self.format % dict(r, 
-                    time=datetime.datetime.fromtimestamp(r['time']).strftime(self.date)))
-        self.append(r)
-        self.update(r)
-
-    def update(self, event):
-        pass
-
-    def __del__(self):
-        try:
-            log.handlers.remove(self)
-        except:
-            pass
-
-def debug(file=sys.stdout, format=SIGNED, date='%Y-%m-%d %H:%M:%S'):
-    debug.log = Log(0, file, format, date)
+def debug(file=sys.stdout, format=SIGNED, date='%H:%M:%S'):
+    """ Writes the log to the given file-like object.
+    """
+    h1 = getattr(debug, '_handler', None)
+    h2 = file
+    if h1 in log.handlers:
+        log.handlers.remove(h1)
+    if hasattr(h2, 'write') and hasattr(h2, 'flush'):
+        h2 = logging.StreamHandler(h2)
+        h2.formatter = logging.Formatter(format, date)
+    if isinstance(h2, logging.Handler):
+        log.handlers.append(h2)
+        debug._handler = h2
 
 # debug()
 # debug(open(cd('log.txt'), 'a'))
 # request('https://textgain.com')
+# debug(False)
 
 ###################################################################################################
 
@@ -541,7 +513,7 @@ class tmp(object):
 # 
 # with tmp(data) as f:
 #     for row in csv(f.name):
-#         print(row)
+#         print row
 
 ##### DB ##########################################################################################
 
@@ -1673,15 +1645,15 @@ class calibrate(Model):
 # Complex models can become "black boxes" with little insight into their decision-making process.
 # Even if they are very accurate, not being able to explain themself has legal and ethical risks.
 
-# The 1st explanatory aid is using test() with a holdout set that was not used for kfoldcv().
-# The 2nd explanatory aid is using fsel() and pp() to examine which features are influential.
+# The 1st line of defense is using test() with a holdout set that was not used for kfoldcv().
+# The 2nd line of defense is using fsel() and pp() to examine which features are influential.
 # If this includes features like "is" or "@name", then the model may be overfitting on noise.
 # Decision Tree ensembles handle noise but they're slow. Trees can be examined with .graph().
 
-# The 3rd explanatory aid is using explain() and hilite(), to inspect individual predictions.
+# The 3rd line of defense is using explain() and hilite(), to inspect individual predictions.
 # This is useful during an error analysis: reviewing influential features in false positives.
 
-# The 4th explanatory aid is testing predictions with bias, e.g., "black woman" vs "white man".
+# The 4th line of defense is testing predictions with bias, e.g., "black woman" vs "white man".
 
 def explain(model, v):
     """ Returns label, probability, and a (feature, weight)-dict.
@@ -3710,6 +3682,7 @@ def selector(element, s):
                     SELECTOR.search(s).groups('')
             except: 
                 return []
+
             tag = tag or '*'                                    # *
 
             if not a:                                           # a
