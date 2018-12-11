@@ -254,7 +254,7 @@ def atomic(f):
             return f(*args, **kwargs)
     return decorator
 
-# hits = collections.defaultdict(int)
+# hits = collections.Counter()
 # 
 # @atomic
 # def hit(k):
@@ -1673,15 +1673,56 @@ class calibrate(Model):
 # Complex models can become "black boxes" with little insight into their decision-making process.
 # Even if they are very accurate, not being able to explain themself has legal and ethical risks.
 
-# The 1st explanatory aid is using test() with a holdout set that was not used for kfoldcv().
-# The 2nd explanatory aid is using fsel() and pp() to examine which features are influential.
-# If this includes features like "is" or "@name", then the model may be overfitting on noise.
-# Decision Tree ensembles handle noise but they're slow. Trees can be examined with .graph().
+# Some things we can do:
+# 1) Use sample() to surmise the training data. Does it represent the labels? Are they separable?
+# 2) Use fsel() and pp() to examine significant features that occur more frequently with a label.
+#    If this includes features like "and" or "@name", then the model may be overfitting on noise.
+#    Decision Tree ensembles counter noise but they're slow. Trees can be examined with .graph().
+# 3) Use test() with a holdout set not used for kfoldcv(). Do the performance metrics hold up?
+# 4) Use test() with a cross-domain (i.e., related) dataset. Do the performance metrics hold up?
+# 5) Use explain() and hilite() to review individual predictions. Do these make sense to humans?
+#    This is also useful for error analysis, to uncover influential features in false positives.
+# 6) Use deliberately biased input (e.g., "black woman" vs "white man") to test predicted output.
 
-# The 3rd explanatory aid is using explain() and hilite(), to inspect individual predictions.
-# This is useful during an error analysis: reviewing influential features in false positives.
+def sample(data=[]):
+    """ Returns an iterator of diverse representative examples
+        from the given list of (vector, label)-tuples.
+    """
+    # https://arxiv.org/pdf/1602.04938.pdf
+    f1 = collections.defaultdict(lambda: \
+         collections.Counter()) # {feature: {label: count}}
+    f2 = collections.Counter()  # {feature: count}
+    for v, label in data:
+        for f in v:
+            f1[f][label] += 1
+            f2[f] += 1
 
-# The 4th explanatory aid is testing predictions with bias, e.g., "black woman" vs "white man".
+    # Submodular pick:
+    seen = set()
+    while 1:
+        x = 0, None
+        for v, label in data:
+            w = 0
+            for f in v:
+                if f not in seen:
+                    w += f1[f][label] * 2
+                    w -= f2[f]
+            if x[0] < w:
+                x = w, v, label # greedy
+        if not x[0]:
+            break
+        seen.update(x[1]) # nonredundant
+        yield x[1:]
+
+# data = [
+#     (('A',       ) , 'X'),
+#     (('A','B'    ) , 'X'),
+#     (('A','B','C') , 'X'),
+#     (('C','D'    ) , 'Y'),
+#     (('D','E'    ) , 'Y'),
+# ]
+# 
+# print(list(sample(data))) # (A, B), (D, E)
 
 def explain(model, v):
     """ Returns label, probability, and a (feature, weight)-dict.
