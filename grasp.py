@@ -975,6 +975,9 @@ class Model(object):
                 setattr(m, k, v)
         return m
 
+def fit(Model, *args, **kwargs):
+    return Model(*args, **kwargs)
+
 def binary(v, cutoff=0.0):
     """ Returns an iterator of features with weight > cutoff.
     """
@@ -1899,13 +1902,13 @@ def majority(a, default=None):
 # ]
 # 
 # v, labels = zip(*examples) # = unzip
-# v = list(wc(tokenize(v)) for v in v)
+# v = list(wc(tok(v)) for v in v)
 # v = list(tfidf(v))
 # 
 # labels = index(zip(v, labels)) # { vector id: label }
 # 
-# x = wc(tokenize('They rolled their terrible eyes'))
-# x = wc(tokenize("'Look at me! Look at me now!' said the cat."))
+# x = wc(tok('They rolled their terrible eyes'))
+# x = wc(tok("'Look at me! Look at me now!' said the cat."))
 # 
 # for w, nn in knn(x, v, k=3):
 #     w = round(w, 2)
@@ -2179,7 +2182,7 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
 
 #---- TOKENIZER -----------------------------------------------------------------------------------
 # The tokenize() function identifies tokens (= words, symbols) and sentence breaks in a string.
-# The task involves handling abbreviations, contractions, hyphenation, emoticons, URLs, ...
+# The complex task involves handling abbreviations, contractions, hyphenation, emoticons, URLs, ...
 
 EMOJI = set((
     u'😊', u'☺️', u'😉', u'😌', u'😏', u'😎', u'😍', u'😘', u'😴', u'😀', u'😃', u'😄', u'😅', 
@@ -2189,106 +2192,142 @@ EMOJI = set((
 ))
 
 EMOTICON = set((
-    ':-D', '8-D', ':D', '8)', '8-)',
-    ':-)', '(-:', ':)', '(:', ':-]', ':=]', ':-))',
-    ':-(', ')-:', ':(', '):', ':((', ":'(", ":'-(",
-    ':-P', ':-p', ':P', ':p', ';-p',
-    ':-O', ':-o', ':O', ':o', '8-o'
-    ';-)', ';-D', ';)',
-    ':-S', ':-s',
-    '<3'
+    ':)', ':D', ':(', ';)', ':-)', ':P', ';-)', ':p', ':-(', ":'(", '(:', ':O', ':-D', ':o', 
+    ':((', ':-P', ':-p', ':-))', '8-)', '(-:', ':-S', ';-p', ':-s', # '):', '<3', '8)'
 ))
 
-abbreviations = {
-    'en': set(('a.m.', 'cf.', 'e.g.', 'etc.', 'i.e.', 'p.m.', 'vs.', 'w/', 'Dr.', 'Mr.'))
+_RE_EMO = '|'.join(re.escape(s) for s in EMOTICON | EMOJI)
+
+tokens = {
+    '*': [
+        _RE_EMO                                                      , # :-)
+        r'https?\://.*?(?=\)?[,;:!?.]*(\s|$))'                       , # http://...
+        r'www\..*?\.[a-z]+'                                          , # www.goo.gl
+        r'\w+\.(com?|net|org|info|be|cn|de|eu|fr|nl|ru|uk)'          , # google.com
+        r'\w+\.(doc|gif|htm|jpg|mp\d|pdf|ppt|py|txt|xls|zip)'        , # cat.jpg
+        r'[\w\.]+@\w+\.(com|net|org)'                                , # a.bc@gmail
+        r'(?<![^\s])([A-Z]\.)+[A-Z]\.?'                              , # U.S.
+        r'(?<![^\s])([A-Z]\.)(?= [A-Z])'                             , # J. R. R. Tolkien
+        r'\d+[.,:/″\']\d+%?'                                         , # 1.23
+        r'\d+€|[$€£¥]\d+'                                            , # 100€
+        r'(?<=\d)(kb|mb|gb|kg|mm|cm|km|m|ft|h|hrs|am|pm)(?=\W|$)'    , # 10 mb
+        r'(?<!\w)(a\.m|ca|cfr?|etc|e\.?g|i\.?e|p\.m|P\.?S|vs|v)\.'   , # etc.
+        r'(?<!\w)(Dr|dr|Mr|mr|nr|no|Prof|prof)\.'                    , # Dr.
+        r'(^|\s)\d\d?\. '                                            , # 1.
+        r'\.+'                                                       , #  ...
+        r'[\[\(]\.+[\)\]]'                                           , # (...)
+        r'[\[\(]\d+[\)\]]'                                           , # [123]
+        r'p?p\.\d+'                                                  , # p.1
+        r'&[a-z]+;'                                                  , # &amp;
+        r'&#\d+;'                                                    , # &#38;
+        r'(^|\n)>(?=[\w])'                                           , # >Hi
+        r'<\w+( \w+=".*?")*( /)?>'                                   , # <p>
+        r'</\w+>'                                                    , # </p>
+        r'--+|==+|--*>|==*>'                                         , # =>
+        r'|'.join(map(re.escape, u'….¡¿?!:;,/(){}[]\'`‘’"“”„&–—'))   , # !
+    ],
+    'de': [
+        r'(?<!\w)(Abs|bspw|bzw|e\.V|d\.h|etw|evtl|ggf|inkl|m\.E)\.'  , # evtl.
+        r'(?<!\w)(Mio|Nr|sog|u\.a|usw|v\.a|vgl|z\.B|z\.T)\.'        ], # z.B.
+    'en': [
+        r'(?i)(?<=\w)\'(cause|d|ll|m|re|s|ve)'                       , # it's
+        r'(?i)(?<=\w)n\'t'                                           , # isn't
+        r'(?i)(?<=\w\.)\'s'                                          , # U.K.'s
+        r'(?i)(?<= )(b/c|w/o|w/)(?= )'                              ], # w/
+    'es': [
+        r'(?i)(?<!\w)(aprox|p\.ej|Sr|Sra|Srta|Uds|Vds)\.'           ], # Sr.
+    'fr': [
+        r'(?i)(?<!\w)(c|d|j|l|m|n|qu|s|t|jusqu|lorsqu|puisqu)\''     , # j'ai
+        r'(?i)(?<!\w)(av|ed|ex|Mme)\.'                              ], # Mme.
+    'nl': [
+        r'(?i)\w+\'\w+'                                              , # auto's
+        r'(?i)\w\'(er|tje)s?'                                        , # 68'ers
+        r'(?<!\w)(bijv|bv|d\.m\.v|e\.a|e\.d|enz|evt|excl|incl)\.'    , # enz.
+        r'(?<!\w)(m\.b\.t|mevr|n\.a\.v|o\.?a|ong|t\.o\.v|zgn)\.'    ], # o.a.
 }
 
-contractions = {
-    'en': set(("'d", "'m", "'s", "'ll", "'re", "'ve", "n't"))
+breaks = {
+    '*': [
+       (r'\r'                                      , '\n'           ), # \n
+       (r' " (.*?) " '                             , ' "< \\1 >" '  ), # "< Oh >"
+       (r" ' (.*?) ' "                             , " '< \\1 >' "  ), # '< Oh >'
+       (u' (…|\.+) (?=[A-Z])'                      , ' \\1 \n '     ), #  Oh… \n Wow
+       (r' ([.!?]) (?=[^.!?])'                     , ' \\1 \n '     ), #  Oh! \n Wow
+       (u' ([.!?]) \n (>"|>\'|”|’)'                , ' \\1 \\2 \n'  ), # “Oh!”\n Wow
+       (u' ([!?]) \n ([–—] [a-z])'                 , ' \\1 \\2'     ), # –Oh!–
+       (u' (>"|>\'|”|’) ([A-Z])'                   , ' \\1 \n \\2'  ), # “Oh!”\n They
+       (u' (>"|>\'|”|’) \n ([(a-z])'               , ' \\1 \\2'     ), # “Oh!” they said
+       (r' "< ((?:[\w,.!?]+ ){1,5})\n ' \
+            r'((?:[\w,.!?]+ ){1,5})>" '            , ' "< \\1\\2>" '), # “Oh! Wow!”
+       (r' "< ((?:[\w,.!?]+ ){1,5})\n ([a-z])'     , ' "< \\1\\2'   ), # “Oh! wow [...]”
+       (r' \n , '                                  , ' , '          ), #  Oh!, they said
+       (r' \n ((#\w+)( #\w+)*)( |$)'               , ' \\1 \n'      ), #  Oh! #Wow \n
+       (r' \n (((%s) ?)+)( |$)'          % _RE_EMO , ' \\1 \n'      ), #  Oh! :) \n
+       (r' (%s) (?=[A-Z])'               % _RE_EMO , ' \\1 \n'      ), #  Oh :-) \n He
+       (r' ((etc|enz|usw)\.) (?=[A-Z])'            , ' \\1 \n'      ), # etc. The
+       (r'(?<=[a-z])- *\n *([a-z])'                , '\\1'          ), # be-\ncause
+       (r' ([\'"])< '                              , ' \\1 '        ), # "
+       (r' >([\'"]) '                              , ' \\1 '        ), # '
+       (r'\s*\n\s*'                                , '\n'           ), # \n\n
+    ]
 }
 
-for c in contractions.values():
-    c |= set(s.replace("'", u'’') for s in c) # n’t
+# Token splitting rules:
+# A token can be a string of alphanumeric characters, i.e., a "word".
+# A token can be a URL, domain or file name, email, without trailing commas.
+# A token can be a number, including decimals, thousands and currency signs.
+# A token can be a known (language-specific) abbreviation or contraction.
+# A token can be a named entity, emoticon, ora  HTML tag with attributes.
 
-_RE_EMO1 = '|'.join(re.escape(' '+' '.join(s)) for s in EMOTICON | EMOJI).replace(r'\-\ ', '\- ?')
-_RE_EMO2 = '|'.join(re.escape(     ''.join(s)) for s in EMOTICON | EMOJI)
+# Sentence break rules:
+# Sentence breaks are marked by .!? or by … if followed by a capital letter.
+# Sentence breaks in quotes are ignored if not followed by a capital letter.
+# Sentence breaks can be followed by trailing quotes, hashtags or emoticons.
 
 def tokenize(s, language='en', known=[]):
     """ Returns the string with punctuation marks split from words , 
         and sentences separated by newlines.
     """
-    p = u'….¡¿?!:;,/(){}[]\'`‘’"“”„&–—'
-    p = re.compile(r'([%s])' % re.escape(p))
-    f = re.sub
-
-    # Find tokens w/ punctuation (URLs, numbers, ...)
-    w  = set(known)
-    w |= set(re.findall(r'https?\://.*?(?:\s|$)', s))                      # http://...
-    w |= set(re.findall(r'(?:\s|^)((?:[A-Z]\.)+[A-Z]\.?)', s))            # U.S.
-    w |= set(re.findall(r'(?:\s|^)([A-Z]\. )(?=[A-Z])', s))               # J. R. R. Tolkien
-    w |= set(re.findall(r'(\d+[\.,:/″][\d\%]+)', s))                      # 1.23
-    w |= set(re.findall(r'(\w+\.(?:doc|html|jpg|pdf|txt|zip))', s, re.U)) # cat.jpg
-    w |= abbreviations.get(language, set())                               # etc.
-    w |=  contractions.get(language, set())                               # 're
-    w  = '|'.join(f(p, r' \\\1 ', w).replace('  ', ' ') for w in w)
-    w  = w.replace('*', '\\*')
-    w  = w.replace('+', '\\+')
-    e1 = _RE_EMO1
-    e2 = _RE_EMO2
-
-    # Split punctuation:
-    s = f(p, ' \\1 ', s) + ' '
-    s = f(r'\t', ' ', s)
-    s = f(r' +', ' ', s)
-    s = f(r'\. (?=\.)', '.', s)                                           #  ...
-    s = f(r'(\(|\[) (\.+) (\]|\))', '\\1\\2\\3', s)                       # (...)
-    s = f(r'(\(|\[) (\d+) (\]|\))', '\\1\\2\\3', s)                       # [1]
-    s = f(r'(^| )(p?p) \. (?=\d)', '\\1\\2. ', s)                         # p.1
-    s = f(r'(?<=\d)(mb|gb|kg|km|m|ft|h|hrs|am|pm) ', ' \\1 ', s)          # 5ft
-    s = f(u'(^|\s)($|£|€)(?=\d)', '\\1\\2 ', s)                           # $10
-    s = f(r'& (#\d+|[A-Za-z]+) ;', '&\\1;', s)                            # &amp; &#38;
-    s = f(w , lambda m: ' %s ' % m.group().replace(' ', ''), s)           # e.g. 1.2
-    s = f(w , lambda m: ' %s ' % m.group().replace(' ', ''), s)           # U.K.'s
-    s = f(e1, lambda m: ' %s ' % m.group().replace(' ', ''), s)           # :-)
-    s = f(r'(https?://.*?)([.?!,)])(?=\s|$)', '\\1 \\2', s)               # (http://)
-    s = f(r'(https?://.*?)([.?!,)])(?=\s|$)', '\\1 \\2', s)               # (http://),
-    s = f(r'www \. (.*?) \. (?=[a-z])', 'www.\\1.', s)                    # www.goo.gl
-    s = f(r' \. (com?|net|org|be|cn|de|fr|nl|ru|uk)(?=\s|$)', '.\\1', s)  # google.com
-    s = f(r'(\w+) \. (?=\w+@\w+\.(?=com|net|org))', ' \\1.', s)           # a.bc@gmail
-    s = f(r'(?<=[a-z])(-)\n([a-z]+(?:\s|$))', '\\2\n', s, re.U)           # be-\ncause
-    s = f(r' +', ' ', s)
-
-    # Split sentences:
-    s = f(r'\r+', '\n', s)
-    s = f(r'\n+', '\n', s)
-    s = f(u' \n', '\n', s)
-    s = f(u'\n ', '\n', s)
-    s = f(u' ([….?!]) (?!=[….?!])', ' \\1\n', s)                          # .\n
-    s = f(u'\n([’”)]) ', ' \\1\n', s)                                     # “Wow.”
-    s = f(r'\n((#\w+) ?) ', ' \\1\n', s)                                  #  Wow! #nice
-    s = f(r'\n(((%s) ?)+) ' % e2, ' \\1\n', s)                            #  Wow! :-)
-    s = f(r' (%s) (?=[A-Z])' % e2, ' \\1\n', s)                           #  Wow :-) The
-    s = f(r' (etc\.) (?=[A-Z])', ' \\1\n', s)                             # etc. The
-    s = f(r'\n, ', ' , ', s)                                              # Aha!, I said
-    s = f(r' +', ' ', s)
-    s = s.split('\n')
-
-    # Balance quotes:
-    for i in range(len(s)-1):
-        j = i + 1
-        if s[j].startswith(('" ', "' ")) and \
-           s[j].count(s[j][0]) % 2 == 1  and \
-           s[i].count(s[j][0]) % 2 == 1:
-            s[i] += ' ' + s[j][0]
-            s[j] = s[j][2:]
-
-    return '\n'.join(s).strip()
+    f = ['' for ch in s] # token flags
+    r = []
+    r.extend(known)
+    r.extend(tokens.get(language, ()))
+    r.extend(tokens.get('*'))
+    # Scan tokens:
+    for r in r:
+        for m in re.finditer(r, s, flags=re.U):
+            i = m.start()
+            j = m.end() - 1
+            if not f[i] and i == j:
+                f[i] = '^$'
+            if not f[i]: # token start
+                f[i] = '^'
+            if not f[j]: # token end
+                f[j] = '$'
+            for i in range(i+1, j):
+                f[i] = '.'
+    a = []
+    # Split tokens:
+    for ch, f in zip(s, f):
+        if '^' in f:
+            ch = ' %s' % ch
+        if '$' in f:
+            ch = '%s ' % ch
+        a.append(ch)
+    s = ''.join(a)
+    s = re.sub(r' +', ' ', s)
+    # Split breaks:
+    for a, b in breaks.get('*') + breaks.get(language, []):
+        s = re.sub(a, b, s)
+    return s.strip()
 
 tok = tokenize
 
-# s = u"RT @user: Check it out... 😎 (https://www.textgain.com) #Textgain cat.jpg"
+# s = u"RT @user: Check it out... 😎 (https://www.textgain.com) #Textgain cät.jpg"
 # s = u"There's a sentence on each line, each a space-separated string of tokens (i.e., words). :)"
 # s = u"Title\nA sentence.Another sentence. ‘A citation.’ By T. De Smedt."
+# 
+# print(tok(s))
 
 def wc(s):
     """ Returns a (word, count)-dict, lowercase.
@@ -2298,7 +2337,7 @@ def wc(s):
     f = collections.Counter(s)
     return f
 
-# print(wc(tokenize('The cat sat on the mat.')))
+# print(wc(tok('The cat sat on the mat.')))
 
 #---- PART-OF-SPEECH TAGGER -----------------------------------------------------------------------
 # Part-of-speech tagging predicts the role of each word in a sentence: noun, verb, adjective, ...
@@ -2418,7 +2457,7 @@ def parse(s, language='en', tokenize=tokenize):
     """ Returns the tagged string as an iterator of sentences,
         where each sentence is a list of (token, tag)-tuples.
     """
-    s = tokenize(s)
+    s = tokenize(s, language)
     s = s.split('\n')
     for s in s:
         yield tag(s, language)
@@ -2605,22 +2644,22 @@ def chunk(pattern, text, replace=[]):
 
 # for m in \
 #   chunk('ADJ', 
-#     tag(tokenize('A big, black cat.'))):
+#     tag(tok('A big, black cat.'))):
 #      print(u(m))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag(tokenize("The cats'll be hungry."))): 
+#     tag(tok("The cats'll be hungry."))): 
 #     print(u(g1), u(g2))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag(tokenize("The boss'll be angry!"))):
+#     tag(tok("The boss'll be angry!"))):
 #     print(u(g1), u(g2))
 
 # for m, g1, g2, g3 in \
 #   chunk('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
-#     tag(tokenize("Cats are more stubborn than dogs."))):
+#     tag(tok("Cats are more stubborn than dogs."))):
 #     print(u(g1), u(g2), u(g3))
 
 def constituents(text, language='en'):

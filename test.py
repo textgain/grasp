@@ -31,7 +31,11 @@ assert tokenize(u'Aha!, I see:) Super'           ) == u'Aha ! , I see :)\nSuper'
 assert tokenize(u"U.K.'s J. R. R. Tolkien"       ) == u"U.K. 's J. R. R. Tolkien"
 assert tokenize(u'your.name@gmail.com!'          ) == u'your.name@gmail.com !'
 assert tokenize(u'http://google.com?p=1'         ) == u'http://google.com?p=1'
-assert tokenize(u'"Citation." Next p.5'          ) == u'" Citation . "\nNext p. 5'
+assert tokenize(u'"Citation." Next p.5'          ) == u'" Citation . "\nNext p.5'
+assert tokenize(u'"Oh! Nice!" he said'           ) == u'" Oh ! Nice ! " he said'
+assert tokenize(u'"Oh!" Nice.'                   ) == u'" Oh ! "\nNice .'
+assert tokenize(u'Oh... Nice.'                   ) == u'Oh ...\nNice .'
+assert tokenize(u'Oh! #wow Nice.'                ) == u'Oh ! #wow\nNice .'
 assert tokenize(u'Hello.Hello! 20:10'            ) == u'Hello .\nHello !\n20:10'
 assert tokenize(u'pre-\ndetermined'              ) == u'predetermined'
 
