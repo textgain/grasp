@@ -81,9 +81,7 @@ import time
 import datetime
 import random
 import math
-
-from heapq import heappush
-from heapq import heappop
+import heapq
 
 try:
     # 3 decimal places (0.001)
@@ -447,8 +445,9 @@ def sliced(a, *ijn):
 def shuffled(a):
     """ Returns an iterator of values in the list, in random order.
     """
-    for v in sorted(a, key=lambda v: random.random()):
-        yield v
+    a = list(a)
+    random.shuffle(a)
+    return iter(a)
 
 def unique(a):
     """ Returns an iterator of unique values in the list, in order.
@@ -592,9 +591,19 @@ class CSV(table):
         """ Returns the given .csv file as an iterator of rows, 
             where each row is a list of values.
         """
-        with open(path, 'rU') as f:
-            for r in csvlib.reader(f, delimiter=separator):
-                yield [u(v) for v in r]
+        try:
+            f = open(path, newline='')
+        except TypeError:
+            f = open(path, 'rU')
+        try:
+            s = next(f)
+            s = s.lstrip('\ufeff') # BOM
+            s = s.lstrip('\xef\xbb\xbf')
+            f = itertools.chain((s,), f)
+        except StopIteration:
+            pass
+        for r in csvlib.reader(f, delimiter=separator):
+            yield [u(v) for v in r]
 
     def __init__(self, name='', separator=',', rows=[]):
         """ Returns the given .csv file as a list of rows, 
@@ -978,23 +987,13 @@ class Model(object):
 def fit(Model, *args, **kwargs):
     return Model(*args, **kwargs)
 
-def binary(v, cutoff=0.0):
-    """ Returns an iterator of features with weight > cutoff.
-    """
-    # Models can be trained with a set or a dict of features
-    # but will ignore the weights in the dict, using 0 or 1.
-    if isinstance(v, dict):
-        return iter(f for f, w in v.items() if w > cutoff)
-    else:
-        return iter(v)
-
 #---- PERCEPTRON ----------------------------------------------------------------------------------
 # The Perceptron or single-layer neural network is a supervised machine learning algorithm.
 # Supervised machine learning uses labeled training examples to infer statistical patterns.
-# Each example is a set of features – e.g., set(('lottery',)) – and a label (e.g., 'spam').
+# Each example is a dict of feature weights, with a label, e.g., ({'lottery': 1}, 'spam').
 
 # The Perceptron takes a list of examples and learns what features are associated with what labels.
-# The resulting 'model' can then be used to predict the label of new examples.
+# The resulting "model" can then be used to predict the label of new examples.
 
 def avg(a):
     a = list(a)
@@ -1089,10 +1088,11 @@ class Perceptron(Model):
 
         guess, p = top(self.predict(v, normalize=False))
         if guess != label:
-            for f in binary(v):
-                # Error correction:
-                cumsum(label, f, +1, self._t)
-                cumsum(guess, f, -1, self._t)
+            for f, w in v.items():
+                if w > 0:
+                    # Error correction:
+                    cumsum(label, f, +1, self._t)
+                    cumsum(guess, f, -1, self._t)
             self._t += 1
 
         self._p = iavg(abs(p), *self._p) # (mean, sd, t)
@@ -1104,8 +1104,8 @@ class Perceptron(Model):
         t = float(self._t)
         for label, features in self.weights.items():
             n = 0
-            for f in binary(v):
-                if f in features:
+            for f in v:
+                if f in features and v[f] > 0:
                     w = features[f]
                     n = n + (w[1] + w[0] * (t - w[2])) / t
             p[label] = n
@@ -1118,10 +1118,10 @@ class Perceptron(Model):
         return p
 
 # p = Perceptron(examples=[
-#     (('woof', 'bark'), 'dog'),
-#     (('meow', 'purr'), 'cat')], n=10)
+#     ({'woof':1, 'bark':1}, 'dog'),
+#     ({'meow':1, 'purr':1}, 'cat')], n=10)
 # 
-# print(p.predict(('meow',)))
+# print(p.predict({'meow':1}))
 # 
 # p.save(open('model.json', 'w'))
 # p = Perceptron.load(open('model.json'))
@@ -1150,11 +1150,12 @@ class NaiveBayes(Model):
             self.train(v, label)
 
     def train(self, v, label=None):
-        for f in binary(v):
-            try:
-                self.weights[label][f] += 1
-            except KeyError:
-                self.weights[label][f]  = 1 + 0.1 # smoothing
+        for f, w in v.items():
+            if w > 0:
+                try:
+                    self.weights[label][f] += 1
+                except KeyError:
+                    self.weights[label][f]  = 1 + 0.1 # smoothing
         self.labels[label] += 1
 
     def predict(self, v):
@@ -1163,7 +1164,7 @@ class NaiveBayes(Model):
         p = dict.fromkeys(self.labels, 0.0)
         for x in self.labels:
             n =  self.labels[x]
-            w = (self.weights[x].get(f, 0.1) / n for f in binary(v))
+            w = (self.weights[x].get(f, 0.1) / n for f, w in v.items() if w > 0)
             w = map(math.log, w) # prevent underflow
             w = sum(w)
             w = math.exp(w) 
@@ -1192,7 +1193,7 @@ def gini(data=[]):
     p = collections.Counter(label for v, label in data)
     n = len(data)
     n = float(n or 1)
-    g = 1 - sum(pow(i / n, 2) for i in p.values())
+    g = 1 - sum((i / n) ** 2 for i in p.values())
     return g
 
 # print(gini([({}, 'cat'), ({}, 'cat')])) # 0.0
@@ -1211,7 +1212,7 @@ class DecisionTree(Model):
                 Y = []
                 N = []
                 for v, label in data:
-                    if f in v:
+                    if v.get(f, 0) > 0:
                         Y.append((v, label))
                     else:
                         N.append((v, label))
@@ -1237,19 +1238,15 @@ class DecisionTree(Model):
                 n[2] = split(n[2], cost, min, max, depth-1)
             return n
 
-        examples = [(set(binary(v)), label) for v, label in examples]
-
         self.labels = count(examples)
         self.root   = split(examples, **kwargs)
 
     def predict(self, v):
         """ Returns a dict of (label, probability)-items.
         """
-        v = set(binary(v))
-
         n = self.root
         while isinstance(n, list): # search
-            if n[0] in v:
+            if v.get(n[0], 0) > 0:
                 n = n[1]
             else:
                 n = n[2]
@@ -1298,7 +1295,7 @@ class DecisionTreeEnsemble(Model):
             # Random sample of features.
             # Random sample of examples (with replacement).
             t = [random.choice(examples) for e in examples]
-           #t = DecisionTree(t, min=min, max=max, **kwargs)
+          # t = DecisionTree(t, min=min, max=max, **kwargs)
             self.trees.append(t)
 
         self.trees = list(parallel(DecisionTree, self.trees, min=min, max=max, **kwargs)) # faster
@@ -1334,9 +1331,6 @@ RandomForest = DecisionTreeEnsemble
 # capturing 'small words' such as pronouns, smileys, word suffixes (-ing)
 # and language-specific letter combinations (oeu, sch, tch, ...)
 
-URL = re.compile(r'https?://.*?(?=[,.!?)]*(?:\s|$))')
-REF = re.compile(r'[\w._\-]*@[\w._\-]+', flags=re.U)
-
 def chngrams(s, n=3):
     """ Returns an iterator of character n-grams.
     """
@@ -1362,12 +1356,11 @@ def skipgrams(s, n=5):
         yield w, tuple(s[max(0,i-n):i] + s[i+1:i+1+n])
 
 def v(s, features=('ch3',)): # (vector)
-    """ Returns a set of character trigrams in the given string.
-        Can be used as Perceptron.train(v(s)) or .predict(v(s)).
+    """ Returns a dict of character trigrams in the given string.
+        Can be used for Perceptron.train(v(s)) or .predict(v(s)).
     """
-   #s = s.lower()
-    s = re.sub(URL, 'http://', s)
-    s = re.sub(REF, '@name', s)
+  # s = s.lower()
+  # s = anon(s)
     v = collections.Counter()
     v[''] = 1 # bias
     for f in features:
@@ -1394,8 +1387,8 @@ vec = v
 # Feature selection identifies the best features, by evaluating their statistical significance.
 
 def pp(data=[]): # (posterior probability)
-    """ Returns a {feature: {label: frequency}} dict
-        for the given set of (vector, label)-tuples.
+    """ Returns a {feature: {label: frequency}} dict 
+        for the given list of (vector, label)-tuples.
     """
     f1 = collections.defaultdict(float) # {label: count}
     f2 = collections.defaultdict(float) # {feature: count}
@@ -1414,7 +1407,7 @@ def pp(data=[]): # (posterior probability)
 
 def fsel(data=[]): # (feature selection, using chi2)
     """ Returns a {feature: p-value} dict 
-        for the given set of (vector, label)-tuples.
+        for the given list of (vector, label)-tuples.
     """
     from scipy.stats import chi2_contingency as chi2
 
@@ -1441,8 +1434,8 @@ def topn(p, n=10, reverse=False):
         yield k, p[k]
 
 # data = [
-#     (set(('yawn', 'meow')), 'cat'),
-#     (set(('yawn',       )), 'dog')] * 10
+#     ({'yawn': 1, 'meow': 1}, 'cat'),
+#     ({'yawn': 1           }, 'dog')] * 10
 # 
 # bias = pp(data)
 # 
@@ -1727,29 +1720,60 @@ def sample(data=[]):
 # 
 # print(list(sample(data))) # (A, B), (D, E)
 
-def explain(model, v):
-    """ Returns label, probability, and a (feature, weight)-dict.
+def cc(v, label, model):
+    """ Returns a (feature, weight)-dict with relative
+        feature-label correlation coefficients (-1 to +1).
+    """
+    p = model.predict(v)[label]
+    r = dict()
+    e = dict(v)
+
+    for f, w in v.items():
+        e[f] = int(w == 0)
+        r[f] = p - model.predict(e)[label] # leave-one-out
+        e[f] = w
+
+    # Most biased feature has weight 1.0:
+    n = max(map(abs, r.values())) or 1.0
+    r = {f: w / n for f, w in r.items()}
+    r = collections.Counter(r)
+    return r
+
+def explain(v, model):
+    """ Returns label, probability, (feature, weight)-dict.
     """
     label, p = top(model.predict(v))
+    return label, p, cc(v, label, model)
 
-    v = dict.fromkeys(binary(v), 1)
-    w = {}
-    for f in v:
-        v[f] = 0
-        w[f] = p - model.predict(v)[label] # leave-one-out
-        v[f] = 1
+# m = Perceptron([
+#     ({'woof': 1}, 'dog'),
+#     ({'meow': 1}, 'cat')])
+#
+# print(explain(m, {'meow': 1, 'purr': 1}))
 
-    n = sum(v for v in w.values() if v > 0) or 1
-    w = {k: v / n for k, v in w.items()}
-    w = collections.Counter(w)
-    return label, p, w
+def counterfactual(v, label, model):
+    """ Returns the minimal set of features to remove, 
+        so that the given vector will have given label.
+    """
+    p = model.predict(v)[label]
+    r = cc(v, label, model)
+    e = set()
+    for f, w in reversed(r.most_common()):
+        if p < 0.5 and w < 0:
+            p -= p * w
+            e.add(f)
+        else:
+            break
+    return e
 
-# data = [
-#     (('woof',), 'dog'),
-#     (('meow',), 'cat')
-# ]
-# m = Perceptron(data)
-# print(explain(m, ('meow','purr')))
+# m = Perceptron([
+#     ({'black': 1, '>25': 0, 'theft': 1, 'drugs': 0}, 'jail'),
+#     ({'black': 1, '>25': 1, 'theft': 0, 'drugs': 1}, 'jail'),
+#     ({'black': 0, '>25': 1, 'theft': 1, 'drugs': 0}, 'bail'),
+#     ({'black': 0, '>25': 1, 'theft': 0, 'drugs': 1}, 'bail')])
+# 
+# This model is biased towards jailing black people:
+# print(counterfactual({'black': 1, '>25': 1, 'drugs': 1}, 'bail', m))
 
 YELLOW = '<span style="background: rgba(255, 255, 0, %.1f);">%s</span>'
 
@@ -1785,8 +1809,12 @@ def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
 # then their distance is: sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2).
 # The distance can be calculated for points in 3D, 4D, or in nD.
 
-# Another measure of similarity is the angle between two vectors (cosine).
-# This works well for text features.
+# Another distance metric is the angle between vectors (cosine).
+# Another distance metric is the difference between vectors.
+# For text features cos() works well, but diff() is fastest.
+
+# Vector weights are assumed to be non-negative, especially 
+# when using cos(), diff(), knn(), tf(), tfidf() and freq().
 
 def index(data=[]):
     """ Returns a dict of (id(vector), label)-items
@@ -1797,12 +1825,12 @@ def index(data=[]):
 def distance(v1, v2):
     """ Returns the distance of the given vectors.
     """
-    return sum(pow(v1.get(f, 0.0) - v2.get(f, 0.0), 2) for f in features((v1, v2))) ** 0.5
+    return sum((v1.get(f, 0) - v2.get(f, 0)) ** 2 for f in features((v1, v2))) ** 0.5
 
 def dot(v1, v2):
     """ Returns the dot product of the given vectors.
     """
-    return sum(v1.get(f, 0.0) * w for f, w in v2.items())
+    return sum(v1.get(f, 0) * w for f, w in v2.items())
 
 def norm(v):
     """ Returns the norm of the given vector.
@@ -1812,15 +1840,28 @@ def norm(v):
 def cos(v1, v2):
     """ Returns the angle of the given vectors (0.0-1.0).
     """
-    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1) # cosine distance
+    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1.0) # cosine distance
+
+def diff(v1, v2):
+    """ Returns the difference of the given vectors.
+    """
+    v1 = set(filter(v1.get, v1)) # non-zero
+    v2 = set(filter(v2.get, v2))
+    return 1 - len(v1 & v2) / float(len(v1 | v2) or 1)
 
 def knn(v, vectors=[], k=3, distance=cos):
     """ Returns the k nearest neighbors from the given list of vectors.
     """
-    nn = sorted((1 - distance(v, x), x) for x in vectors)
-    nn = reversed(nn)
-    nn = list(nn)[:k]
+    nn = ((distance(v, x), random.random(), x) for x in vectors)
+    nn = heapq.nsmallest(k, nn)
+  # nn = sorted(nn)[:k]
+    nn = [(1 - d, x) for d, r, x in nn]
     return nn
+
+def binary(v, cutoff=0.0):
+    """ Returns a vector with binary weights (0 or 1).
+    """
+    return {f: int(w > cutoff) for f, w in v.items()}
 
 def sparse(v, tol=5):
     """ Returns a vector with non-zero weight features.
@@ -1837,9 +1878,21 @@ def reduce(v, features=set()):
     """
     return {f: w for f, w in v.items() if f not in features}
 
+def scale(v, x=0.0, y=1.0):
+    """ Returns a vector with scaled weights (between x and y).
+    """
+    a = min(v.values())
+    b = max(v.values())
+    return {f: float(w - a) / (b - a) * (y - x) + x for f, w in v.items()}
+
+def unit(v):
+    """ Returns a vector with normalized weights (length 1).
+    """
+    n = norm(v) or 1.0
+    return {f: w / n for f, w in v.items()}
+
 def normalize(v):
-    """ Returns a vector with normalized weights
-        (unit vector, sum to 1.0).
+    """ Returns a vector with normalized weights (sum to 1).
     """
     return tf(v)
 
@@ -1913,8 +1966,6 @@ def majority(a, default=None):
 # for w, nn in knn(x, v, k=3):
 #     w = round(w, 2)
 #     print(w, labels[id(nn)])
-# 
-# print(majority(labels[id(nn)] for w, nn in knn(x, v, k=3))):
 
 #---- VECTOR CLUSTERING ---------------------------------------------------------------------------
 # The k-means clustering algorithm is an unsupervised machine learning method
@@ -2038,10 +2089,31 @@ pca = svd # (Principal Component Analysis)
 
 #---- TEXT ----------------------------------------------------------------------------------------
 
-LINK = re.compile(r'(https?://.*?|www\..*?|[\w|-]+\.(?:com|net|org))(?:[.?!,)])?(?:\'|\"|\s|$)')
+diacritics = u"àáâãäåǟāąæçćčςďḑèéêëēěęģìíîïīįłķќĺļľņńñňѝйòóőôõȭöȯȱōðøœþŕřŗśšťțùúűûüůūųẁẃẅŵỳýÿŷўźžż"
 
-def diff(s1, s2):
-    raise NotImplementedError
+URL = re.compile(r'(https?://.*?|www\.*?\.[\w.]+|[\w-]+\.(?:com|net|org))(?=\)?[,;:!?.]*(?:\s|$))')
+REF = re.compile(r'[\w.-]*@[\w.-]+', flags=re.U)
+
+def similarity(s1, s2, n=5):
+    """ Returns the degree of syntacic similarity (0.0-1.0),
+        measured by number of overlapping n-grams.
+    """
+    g1 = collections.Counter(ngrams(s1, n))
+    g2 = collections.Counter(ngrams(s2, n))
+    g3 = collections.Counter()
+    for w in g1:
+        if w in g2:
+            i = min(g1[w], g2[w])
+            g1[w] -= i
+            g2[w] -= i
+            g3[w] += i
+    return sum(g3.values()) / float(sum(g3.values()) + sum(g2.values()) + sum(g1.values()) or 1)
+
+sim = similarity
+
+# s1 = 'the black cat sat on the mat'
+# s2 = 'the white cat sat on the mat'
+# print(sim(s1, s2, n=3))
 
 def readability(s):
     """ Returns the readability of the given string (0.0-1.0).
@@ -2072,6 +2144,40 @@ def readability(s):
     r = min(r, 1.0)
     return r
 
+def anon(s):
+    """ Returns the string with no URLs and @usernames.
+    """
+    s = re.sub(URL, 'http://', s)
+    s = re.sub(REF, '<name>', s)
+    return s
+
+# print(anon('@Textgain (https://www.textgain.com)'))
+
+def sep(s, punctuation=',;:.!?()"\''):
+    """ Returns the string with separated punctuation marks.
+    """
+    s = s.replace( ',',  ' , ')
+    s = s.replace( ';',  ' , ')
+    s = s.replace( ':',  ' : ')
+    s = s.replace( '.',  ' . ') # fast, naive
+    s = s.replace( '!',  ' ! ')
+    s = s.replace( '?',  ' ? ')
+    s = s.replace( '(',  ' ( ')
+    s = s.replace( ')',  ' ) ')
+    s = s.replace( '"',  ' " ')
+    s = s.replace( "'",  " ' ")
+    s = s.replace(u"‘", u" ‘ ")
+    s = s.replace(u"’", u" ’ ")
+    s = s.replace(u"“", u" “ ")
+    s = s.replace(u"”", u" ” ")
+    s = s.replace(';  )', ';)')
+    s = s.replace(':  )', ':)')
+    s = s.replace(':  (', ':(')
+    s = ' '.join(s.split())
+    return s
+
+# print(sep('"Wow!" :)'))
+
 def detag(s):
     """ Returns the string with no HTML tags.
     """
@@ -2096,9 +2202,12 @@ def destress(s, replace={}):
         s = s.replace(k, v)
     for k, v in {
      u'ø' : 'o' ,
+     u'æ' : 'ae',
+     u'œ' : 'oe',
+     u'ä' : 'ae',
+     u'ö' : 'oe',
+     u'ü' : 'ue',
      u'ß' : 'ss',
-     u'œ' : 'ae',
-     u'æ' : 'oe',
      u'“' : '"' ,
      u'”' : '"' ,
      u'‘' : "'" ,
@@ -2184,17 +2293,17 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
 # The tokenize() function identifies tokens (= words, symbols) and sentence breaks in a string.
 # The complex task involves handling abbreviations, contractions, hyphenation, emoticons, URLs, ...
 
-EMOJI = set((
+EMOJI = {
     u'😊', u'☺️', u'😉', u'😌', u'😏', u'😎', u'😍', u'😘', u'😴', u'😀', u'😃', u'😄', u'😅', 
     u'😇', u'😂', u'😭', u'😢', u'😱', u'😳', u'😜', u'😛', u'😁', u'😐', u'😕', u'😧', u'😦', 
     u'😒', u'😞', u'😔', u'😫', u'😩', u'😠', u'😡', u'🙊', u'🙈', u'💔', u'❤️', u'💕', u'♥', 
     u'👌', u'✌️', u'👍', u'🙏'
-))
+}
 
-EMOTICON = set((
+EMOTICON = {
     ':)', ':D', ':(', ';)', ':-)', ':P', ';-)', ':p', ':-(', ":'(", '(:', ':O', ':-D', ':o', 
     ':((', ':-P', ':-p', ':-))', '8-)', '(-:', ':-S', ';-p', ':-s', # '):', '<3', '8)'
-))
+}
 
 _RE_EMO = '|'.join(re.escape(s) for s in EMOTICON | EMOJI)
 
@@ -2284,7 +2393,7 @@ breaks = {
 # Sentence breaks in quotes are ignored if not followed by a capital letter.
 # Sentence breaks can be followed by trailing quotes, hashtags or emoticons.
 
-def tokenize(s, language='en', known=[]):
+def tokenize(s, language='en', known=[]): # ~ 125K tokens/sec
     """ Returns the string with punctuation marks split from words , 
         and sentences separated by newlines.
     """
@@ -2374,7 +2483,7 @@ def ctx(*w):
 
 # print(ctx(('The', 'DET'), ('cat', 'NOUN'), ('sat', 'VERB'))) # context of 'cat'
 #
-# set([
+# {
 #     ' '        , 
 #     '$ -1 The' , 
 #     '? -1 DET' , 
@@ -2386,7 +2495,7 @@ def ctx(*w):
 #     '$ +0 cat' , 
 #     '$ +1 sat' , 
 #     '? +1 VERB', 
-# ])
+# }
 
 @printable
 class Tagged(list):
@@ -2465,29 +2574,29 @@ def parse(s, language='en', tokenize=tokenize):
 # for s in parse("We're all mad here. I'm mad. You're mad."):
 #     print(repr(s))
 
-PTB = {           # Penn Treebank tagset                                           # EN
-    u'NOUN' : set(('NN', 'NNS', 'NNP', 'NNPS', 'NP')),                             # 30%
-    u'VERB' : set(('VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'MD')),                # 14%
-    u'PUNC' : set(('LS', 'SYM', '.', ',', ':', '(', ')', '``', "''", '$', '#')),   # 11%
-    u'PREP' : set(('IN', 'PP')),                                                   # 10%
-    u'DET'  : set(('DT', 'PDT', 'WDT', 'EX')),                                     #  9%
-    u'ADJ'  : set(('JJ', 'JJR', 'JJS')),                                           #  7%
-    u'ADV'  : set(('RB', 'RBR', 'RBS', 'WRB')),                                    #  4%
-    u'NUM'  : set(('CD', 'NO')),                                                   #  4%
-    u'PRON' : set(('PR', 'PRP', 'PRP$', 'WP', 'WP$')),                             #  3%
-    u'CONJ' : set(('CC', 'CJ')),                                                   #  2%
-    u'X'    : set(('FW',)),                                                        #  2%
-    u'PRT'  : set(('POS', 'PT', 'RP', 'TO')),                                      #  2%
-    u'INTJ' : set(('UH',)),                                                        #  1%
+PTB = {           # Penn Treebank tagset                                      # EN
+    u'NOUN' : {'NN', 'NNS', 'NNP', 'NNPS', 'NP'},                             # 30%
+    u'VERB' : {'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'MD'},                # 14%
+    u'PUNC' : {'LS', 'SYM', '.', ',', ':', '(', ')', '``', "''", '$', '#'},   # 11%
+    u'PREP' : {'IN', 'PP'},                                                   # 10%
+    u'DET'  : {'DT', 'PDT', 'WDT', 'EX'},                                     #  9%
+    u'ADJ'  : {'JJ', 'JJR', 'JJS'},                                           #  7%
+    u'ADV'  : {'RB', 'RBR', 'RBS', 'WRB'},                                    #  4%
+    u'NUM'  : {'CD', 'NO'},                                                   #  4%
+    u'PRON' : {'PR', 'PRP', 'PRP$', 'WP', 'WP$'},                             #  3%
+    u'CONJ' : {'CC', 'CJ'},                                                   #  2%
+    u'X'    : {'FW'},                                                         #  2%
+    u'PRT'  : {'POS', 'PT', 'RP', 'TO'},                                      #  2%
+    u'INTJ' : {'UH'},                                                         #  1%
 }
 
 WEB = dict(PTB, **{
-    u'NOUN' : set(('NN', 'NNS', 'NP')),                                            # 14%
-    u'NAME' : set(('NNP', 'NNPS', '@')),                                           # 11%
-    u'PRON' : set(('PR', 'PRP', 'PRP$', 'WP', 'WP$', 'PR|MD', 'PR|VB', 'WP|VB')),  #  9%
-    u'URL'  : set(('URL',)),                       # 'youve'  'thats'  'whats'     #  1%
-    u':)'   : set((':)',)),                                                        #  1%
-    u'#'    : set(('#',)),                                                         #  1%
+    u'NOUN' : {'NN', 'NNS', 'NP'},                                            # 14%
+    u'NAME' : {'NNP', 'NNPS', '@'},                                           # 11%
+    u'PRON' : {'PR', 'PRP', 'PRP$', 'WP', 'WP$', 'PR|MD', 'PR|VB', 'WP|VB'},  #  9%
+    u'URL'  : {'URL'},                         # 'youve'  'thats'  'whats'    #  1%
+    u':)'   : {':)'},                                                         #  1%
+    u'#'    : {'#'},                                                          #  1%
 })
 WEB['PUNC'].remove('#')
 WEB['PUNC'].add('RT')
@@ -2542,7 +2651,7 @@ def universal(w, tag, tagset=WEB):
 # A NP (noun phrase) is a noun + preceding determiners and adjectives (e.g., 'the big black cat').
 # A VP (verb phrase) is a verb + preceding auxillary verbs (e.g., 'might be doing'). 
 
-TAG = set((
+TAG = {
     'NAME' ,
     'NOUN' ,
     'VERB' ,
@@ -2560,7 +2669,7 @@ TAG = set((
     'URL'  ,
     ':)'   ,
     '#'
-))
+}
 
 inflections = {
     'aux'  : r"can|shall|will|may|must|could|should|would|might|'ll|'d",
@@ -2729,11 +2838,11 @@ polarity = {
 }
 
 negation = {
-    'en': set(('no', 'not', "n't")),
+    'en': {'no', 'not', "n't"},
 }
 
 intensifiers = {
-    'en': set(('really', 'very')),
+    'en': {'really', 'very'},
 }
 
 for f in glob.glob(cd('*-pol.json')):
@@ -3178,8 +3287,8 @@ setattr(google, 'translate', translate)
 Annotation = collections.namedtuple('Annotation', ('text', 'language', 'tags', 'location'))
 
 def annotate(path, delay=1, key=None):
-    ''' Returns the image annotation.
-    '''
+    """ Returns the image annotation.
+    """
     with open(path, 'rb') as f:
         s = base64.b64encode(f.read())
         s = {'requests': [
@@ -3266,7 +3375,7 @@ class Twitter(object):
             'language'   : language,
             'track'      : q
         }
-        r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+        r = oauth(*r, key=k[0], token=k[1], secret=k[2])
         r = serialize(*r)
         r = request(r, timeout=timeout)
 
@@ -3290,7 +3399,7 @@ class Twitter(object):
                 'lang'       : language,
                 'q'          : q
             }
-            r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+            r = oauth(*r, key=k[0], token=k[1], secret=k[2])
             r = serialize(*r)
             r = download(r, delay=delay, cached=cached) # 180 requests / 15 minutes
             r = json.loads(u(r))
@@ -3319,7 +3428,7 @@ class Twitter(object):
                 'cursor'      : id,
                 'screen_name' : q.lstrip('@')
             }
-            r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+            r = oauth(*r, key=k[0], token=k[1], secret=k[2])
             r = serialize(*r)
             r = download(r, delay=delay, cached=cached) # 15 requests / 15 minutes
             r = json.loads(u(r))
@@ -3350,13 +3459,13 @@ class Twitter(object):
         r = 'https://api.twitter.com/1.1/users/show.json', {
             'screen_name' : q
         }
-        r = oauth(*r, key=k.key, token=k.token, secret=k.secret)
+        r = oauth(*r, key=k[0], token=k[1], secret=k[2])
         r = serialize(*r)
         r = download(r, delay=delay, cached=cached) # 900 requests / 15 minutes
         r = json.loads(u(r))
 
         return (
-           #r.get('id_str', '')
+          # r.get('id_str', '')
             r.get('name', ''),
             r.get('description', ''),
             r.get('lang', ''),
@@ -3383,7 +3492,7 @@ twitter = Twitter()
 
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
 
-BIBLIOGRAPHY = set((
+BIBLIOGRAPHY = {
     'div'                ,
     'table'              , # infobox
     '#references'        , # references title
@@ -3395,7 +3504,7 @@ BIBLIOGRAPHY = set((
     'h2 < #see_also ~ *' ,
     'h2 < #notes'        ,
     'h2 < #notes ~ *'    ,
-))
+}
 
 def wikipedia(q='', language='en', delay=1, cached=True):
     """ Returns the HTML source of the given Wikipedia article (or '').
@@ -3541,7 +3650,7 @@ def mail(to, subject, message, relay=SMTP('', '', 'smtp.gmail.com:465')):
 #     ])
 # ])
 
-SELF_CLOSING = set(( # <img src="" />
+SELF_CLOSING = { # <img src="" />
     'area'    ,
     'base'    ,
     'br'      ,
@@ -3558,7 +3667,7 @@ SELF_CLOSING = set(( # <img src="" />
     'source'  ,
     'track'   ,
     'wbr'     ,
-))
+}
 
 def quote(s):
     """ Returns the quoted string.
@@ -3857,7 +3966,7 @@ def selector(element, s):
 #---- PLAINTEXT -----------------------------------------------------------------------------------
 # The plaintext() function traverses a DOM HTML element, strips all tags while keeping Text data.
 
-BLOCK = set((
+BLOCK = {
     'article'    ,
     'aside'      ,
     'blockquote' ,
@@ -3880,7 +3989,7 @@ BLOCK = set((
     'table'      ,
     'textarea'   ,
     'ul'         ,
-))
+}
 
 PLAIN = {
      'li' : lambda s: '* %s\n' % re.sub(r'\n\s+', '\n&nbsp;&nbsp;', s),
@@ -3892,7 +4001,7 @@ PLAIN = {
      'td' : lambda s: s + '\n'  ,
 }
 
-def plaintext(element, keep={}, ignore=set(('head', 'script', 'style', 'form')), format=PLAIN):
+def plaintext(element, keep={}, ignore={'head', 'script', 'style', 'form'}, format=PLAIN):
     """ Returns the given element as a plaintext string.
         A (tag, [attributes])-dict to keep can be given.
     """
@@ -3945,8 +4054,8 @@ def encode(s):
     s = s.replace('>' , '&gt;'  )
     s = s.replace('"' , '&quot;')
     s = s.replace("'" , '&apos;')
-   #s = s.replace('\n', '&#10;' )
-   #s = s.replace('\r', '&#13;' )
+  # s = s.replace('\n', '&#10;' )
+  # s = s.replace('\r', '&#13;' )
     return s
 
 def decode(s):
@@ -3958,8 +4067,8 @@ def decode(s):
     s = s.replace('&quot;' , '"')
     s = s.replace('&apos;' , "'")
     s = s.replace('&nbsp;' , ' ')
-   #s = s.replace('&#10;'  , '\n')
-   #s = s.replace('&#13;'  , '\r')
+  # s = s.replace('&#10;'  , '\n')
+  # s = s.replace('&#13;'  , '\r')
     s = re.sub(r'https?://.*?(?=\s|$)', \
         lambda m: urldecode(m.group()), s) # '%3A' => ':' (in URL)
     return s
@@ -4388,7 +4497,7 @@ def shortest_paths(g, n1, n2=None):
     q = [(0.0, n1, ())]
     v = set() # visited?
     while q:
-        d, n, p = heappop(q)
+        d, n, p = heapq.heappop(q)
         if n not in v:
             v.add(n)
             p += (n,)
@@ -4399,7 +4508,7 @@ def shortest_paths(g, n1, n2=None):
                 raise StopIteration
             for n, w in g.get(n, {}).items(): # {n1: {n2: cost}}
                 if n not in v:
-                    heappush(q, (d + w, n, p))
+                    heapq.heappush(q, (d + w, n, p))
 
 def shortest_path(g, n1, n2):
     """ Returns the shortest path from n1 to n2.
