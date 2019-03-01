@@ -1799,6 +1799,11 @@ def distance(v1, v2):
     """
     return sum(pow(v1.get(f, 0.0) - v2.get(f, 0.0), 2) for f in features((v1, v2))) ** 0.5
 
+def manhattandistance(v1, v2):
+    """ Returns the manhattan distance of the given vectors.
+    """
+    return sum(abs(v1.get(f, 0.0) - v2.get(f, 0.0)) for f in features((v1, v2)))
+
 def dot(v1, v2):
     """ Returns the dot product of the given vectors.
     """
@@ -1813,6 +1818,11 @@ def cos(v1, v2):
     """ Returns the angle of the given vectors (0.0-1.0).
     """
     return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1) # cosine distance
+
+def jaccard (v1, v2):
+    """ Returns the jaccard similarity coefficient of the given vectors (0.0-1.0).
+    """
+    return len([f for f in features((v1,v2)) if v1.get(f, 0.0) == v2.get(f, 0.0)]) / float(len(v1))
 
 def knn(v, vectors=[], k=3, distance=cos):
     """ Returns the k nearest neighbors from the given list of vectors.
