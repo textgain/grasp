@@ -75,6 +75,7 @@ import xml.etree.ElementTree as ElementTree
 import sqlite3 as sqlite
 import csv as csvlib
 import json
+import zipfile
 import tempfile
 import glob
 import time
@@ -82,12 +83,6 @@ import datetime
 import random
 import math
 import heapq
-
-try:
-    # 3 decimal places (0.001)
-    json.encoder.FLOAT_REPR = lambda f: format(f, '.3f')
-except:
-    pass
 
 PY2 = sys.version.startswith('2')
 PY3 = sys.version.startswith('3')
@@ -915,6 +910,414 @@ def pw_ok(s1, s2):
 
 ##### ML ##########################################################################################
 
+#---- VECTOR --------------------------------------------------------------------------------------
+# A vector is a {feature: weight} dict, with n features, or n dimensions.
+
+# Given two points {x: 1, y: 2} and {x: 3, y: 4} in 2D,
+# their distance is: sqrt((3 - 1) ** 2 + (4 - 2) ** 2).
+# Distance can be calculated for points in 3D or in nD.
+
+# Another distance metric is the angle between vectors (cosine).
+# Another distance metric is the difference between vectors.
+# For vectorized text cos() works well but diff() is faster.
+
+# Vector weights are assumed to be non-negative, especially 
+# when using cos(), diff(), knn(), tf(), tfidf() and freq().
+
+def index(data=[]):
+    """ Returns a dict of (id(vector), label)-items
+        for the given list of (vector, label)-tuples.
+    """
+    return {id(v): label for v, label in data}
+
+def distance(v1, v2):
+    """ Returns the distance of the given vectors.
+    """
+    return sum((v1.get(f, 0) - v2.get(f, 0)) ** 2 for f in features((v1, v2))) ** 0.5
+
+def dot(v1, v2):
+    """ Returns the dot product of the given vectors.
+    """
+    return sum(v1.get(f, 0) * w for f, w in v2.items())
+
+def norm(v):
+    """ Returns the norm of the given vector.
+    """
+    return sum(w ** 2 for f, w in v.items()) ** 0.5
+
+def cos(v1, v2):
+    """ Returns the angle of the given vectors (0.0-1.0).
+    """
+    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1.0) # cosine distance
+
+def diff(v1, v2):
+    """ Returns the difference of the given vectors.
+    """
+    v1 = set(filter(v1.get, v1)) # non-zero
+    v2 = set(filter(v2.get, v2))
+    return 1 - len(v1 & v2) / float(len(v1 | v2) or 1)
+
+def knn(v, vectors=[], k=3, distance=cos):
+    """ Returns the k nearest neighbors from the given list of vectors.
+    """
+    nn = ((distance(v, x), random.random(), x) for x in vectors)
+    nn = heapq.nsmallest(k, nn)
+  # nn = sorted(nn)[:k]
+    nn = [(1 - d, x) for d, r, x in nn]
+    return nn
+
+def reduce(v, features=set()):
+    """ Returns a vector without the given features.
+    """
+    return {f: w for f, w in v.items() if f not in features}
+
+def sparse(v, cutoff=0.00001):
+    """ Returns a vector with non-zero weight features.
+    """
+    return {f: w for f, w in v.items() if w > cutoff}
+
+def binary(v, cutoff=0.0):
+    """ Returns a vector with binary weights (0 or 1).
+    """
+    return {f: int(w > cutoff) for f, w in v.items()}
+
+def onehot(v): # {'age': '25+'} => {('age', '25+'): 1}
+    """ Returns a vector with non-categorical features.
+    """
+    return dict((f, w) if isinstance(w, (int, float)) else ((f, w), 1) for f, w in v.items())
+
+def scale(v, x=0.0, y=1.0):
+    """ Returns a vector with normalized weights (between x and y).
+    """
+    a = min(v.values())
+    b = max(v.values())
+    return {f: float(w - a) / (b - a) * (y - x) + x for f, w in v.items()}
+
+def unit(v):
+    """ Returns a vector with normalized weights (length 1).
+    """
+    n = norm(v) or 1.0
+    return {f: w / n for f, w in v.items()}
+
+def normalize(v):
+    """ Returns a vector with normalized weights (sum to 1).
+    """
+    return tf(v)
+
+def tf(v):
+    """ Returns a vector with normalized weights
+        (term frequency).
+    """
+    n = sum(v.values())
+    n = float(n or 1)
+    return {f: w / n for f, w in v.items()}
+
+def tfidf(vectors=[]):
+    """ Returns an iterator of vectors with normalized weights
+        (term frequency–inverse document frequency).
+    """
+    df = collections.Counter() # stopwords have higher df (I, the, or, ...)
+    if not isinstance(vectors, list):
+        vectors = list(vectors)
+    for v in vectors:
+        df.update(v)
+    for v in vectors:
+        yield {f: w / float(df[f] or 1) for f, w in v.items()}
+
+def features(vectors=[]):
+    """ Returns the set of features for all vectors.
+    """
+    return set().union(*vectors)
+
+def centroid(vectors=[]):
+    """ Returns the mean vector for all vectors.
+    """
+    v = list(vectors)
+    n = float(len(v))
+    return {f: sum(v.get(f, 0) for v in v) / n for f in features(v)}
+
+def freq(a):
+    """ Returns the relative frequency distribution of items in the list.
+    """
+    f = collections.Counter(a)
+    f = collections.Counter(normalize(f))
+    return f
+
+def majority(a, default=None):
+    """ Returns the most frequent item in the given list (majority vote).
+    """
+    f = collections.Counter(a)
+    try:
+        m = max(f.values())
+        return random.choice([k for k, v in f.items() if v == m])
+    except:
+        return default
+
+# print(majority(['cat', 'cat', 'dog']))
+
+#---- VECTOR CLUSTERING ---------------------------------------------------------------------------
+# The k-means clustering algorithm is an unsupervised machine learning method
+# that partitions a given set of vectors into k clusters, so that each vector
+# belongs to the cluster with the nearest center (mean).
+
+euclidean = distance
+spherical = cos
+
+def ss(vectors=[], distance=euclidean):
+    """ Returns the sum of squared distances to the center (variance).
+    """
+    v = list(vectors)
+    c = centroid(v)
+    return sum(distance(v, c) ** 2 for v in v)
+
+def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
+    """ Returns a list of k lists of vectors, clustered by distance.
+    """
+    vectors = list(vectors)
+    optimum = None
+
+    for _ in range(max(n, 1)):
+
+        # Random initialization:
+        g = list(shuffled(vectors))
+        g = list(g[i::k] for i in range(k))[:len(g)]
+
+        # Lloyd's algorithm:
+        for _ in range(iterations):
+            m = [centroid(v) for v in g]
+            e = []
+            for m1, g1 in zip(m, g):
+                for v in g1:
+                    d1 = distance(v, m1)
+                    d2, g2 = min((distance(v, m2), g2) for m2, g2 in zip(m, g))
+                    if d2 < d1:
+                        e.append((g1, g2, v)) # move to nearer centroid
+            for g1, g2, v in e:
+                g1.remove(v)
+                g2.append(v)
+            if not e: # converged?
+                break
+
+        # Optimal solution = lowest within-cluster sum of squares:
+        optimum = min(optimum or g, g, key=lambda g: sum(ss(g, distance) for g in g))
+    return optimum
+
+# data = [
+#     {'woof': 1},
+#     {'woof': 1},
+#     {'meow': 1}
+# ]
+# 
+# for cluster in kmeans(data, k=2):
+#     print(cluster) # cats vs dogs
+
+#---- VECTOR MATRIX -------------------------------------------------------------------------------
+# For performance, many algorithms for statistical analysis use NumPy arrays.
+
+def matrix(vectors=[]):
+    """ Returns a 2D numpy.ndarray of the given vectors, 
+        with columns ordered by sorted(features(vectors).
+    """
+    import numpy
+
+    f = features(vectors)
+    f = sorted(f)
+    f = enumerate(f)
+    f = {v: i for i, v in f}
+    m = numpy.zeros((len(vectors), len(f)))
+    for v, a in zip(vectors, m):
+        a.put(map(f.__getitem__, v), v.values())
+    return m
+
+class svd(list):
+    """ Returns a list of vectors, each with n concepts,
+        where each concept is a combination of features.
+        (Singular Value Decomposition)
+    """
+    def __init__(self, vectors=[], n=2):
+        import numpy
+
+        f  = dict(enumerate(sorted(features(vectors))))
+        m  = matrix(vectors)
+        m -= numpy.mean(m, 0)
+        # u:  vectors x concepts
+        # v: concepts x features
+        u, s, v = numpy.linalg.svd(m, full_matrices=False)
+
+        self.extend(
+            sparse({   i  : w * abs(w) for i, w in enumerate(a) }) for a in u[:,:n]
+        )
+        self.concepts = tuple(
+            sparse({ f[i] : w * abs(w) for i, w in enumerate(a) }) for a in v[:n]
+        )
+        self.features = normalize(
+            sparse({ f[i] : 1 * abs(w) for i, w in enumerate(numpy.dot(s[:n], v[:n]))
+        }))
+
+    @property
+    def cs(self):
+        return self.concepts
+
+    @property
+    def pc(self):
+        return self.features
+
+pca = svd # (Principal Component Analysis)
+
+# data = [
+#     {'x': 0.0, 'y': 1.1, 'z': 1.0},
+#     {'x': 0.0, 'y': 1.0, 'z': 0.0}
+# ]
+# 
+# print(svd(data, n=2))
+# print(svd(data, n=2).cs[0])
+# print(svd(data, n=1).pc)
+
+#---- FEATURES ------------------------------------------------------------------------------------
+# Character 3-grams are sequences of 3 successive characters: 'hello' => 'hel', 'ell', 'llo'.
+# Character 3-grams are useful, all-round features in vectorized text data,
+# capturing "small words" such as pronouns, emoticons, word suffixes (-ing)
+# and language-specific letter combinations (oeu, sch, tch, ...)
+
+def chngrams(s, n=3):
+    """ Returns an iterator of character n-grams.
+    """
+    if inspect.isgenerator(s):
+        s = list(s)
+    for i in range(len(s) - n + 1):
+        yield s[i:i+n] # 'hello' => 'hel', 'ell', 'llo'
+
+def ngrams(s, n=2):
+    """ Returns an iterator of word n-grams.
+    """
+    if isinstance(s, basestring):
+        s = s.split()
+    for w in chngrams((w for w in s if w), n):
+        yield tuple(w)
+
+def skipgrams(s, n=5):
+    """ Returns an iterator of (word, context)-tuples.
+    """
+    if isinstance(s, basestring):
+        s = s.split()
+    for i, w in enumerate(s):
+        yield w, tuple(s[max(0,i-n):i] + s[i+1:i+1+n])
+
+def v(s, features=('ch3',)): # (vector)
+    """ Returns a dict of character trigrams in the given string.
+        Can be used for Perceptron.train(v(s)) or .predict(v(s)).
+    """
+  # s = tokenize(s).lower()
+    v = collections.Counter()
+    v[''] = 1 # bias
+    for f in features:
+        f = f.lower()
+        if f[0] == 'c': # 'c1' (punctuation, diacritics)
+            v.update(chngrams(s, n=int(f[-1])))
+        if f[0] == 'w': # 'w1'
+            v.update(' '.join(w) for w in \
+                       ngrams(s, n=int(f[-1])))
+        if f[0] == '%':
+            v.update(style(s))
+  # v = normalize(v)
+    return v
+
+vec = v
+
+def style(s):
+    """ Returns a dict of stylistic features in the given string 
+        (word length, sentence length, shouting, capitalization).
+    """
+    v = collections.Counter()
+    for f, w in (
+      ('+', r'[\w](?=\w{2})'), # word length
+      (' ', r'[\s]'         ), # words
+      ('.', r'[.!?]'        ), # sentences
+      (',', r'[,;:("-][^-)]'), # punctuation
+      ('^', r'[A-Z]'        ), # uppercase
+      ('!', r'[!]'          ), # shouting
+      ('@', r'[@#]'+u'😂😍😊')):
+        i = len(re.findall(w, s))
+        j = len(s) * 1.0 or 1.0
+        r = i / j
+        for p in (0, 0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.3, 0.5, 0.9):
+            v['%s>%i%%' % (f, p * 100)] = int(r > p)
+    return v
+
+# data = []
+# for id, username, tweet, date in csv(cd('spam.csv')):
+#     data.append((v(tweet), 'spam'))
+# for id, username, tweet, date in csv(cd('real.csv')):
+#     data.append((v(tweet), 'real'))
+# 
+# p = Perceptron(examples=data, n=10)
+# p.save(open('spam-model.json', 'w'))
+# 
+# print(p.predict(v('Be Lazy and Earn $3000 per Week'))) # {'real': 0.15, 'spam': 0.85}
+
+#---- FEATURE SELECTION ---------------------------------------------------------------------------
+# Feature selection identifies the best features, by evaluating their statistical significance.
+
+def pp(data=[]): # (posterior probability)
+    """ Returns a {feature: {label: frequency}} dict 
+        for the given list of (vector, label)-tuples.
+    """
+    f1 = collections.defaultdict(float) # {label: count}
+    f2 = collections.defaultdict(float) # {feature: count}
+    f3 = collections.defaultdict(float) # {feature, label: count}
+    p  = {}
+    for v, label in data:
+        f1[label] += 1
+    for v, label in data:
+        for f in v:
+            f2[f] += 1
+            f3[f, label] += 1 / f1[label]
+    for label in f1:
+        for f in f2:
+            p.setdefault(f, {})[label] = f1[label] / f2[f] * f3[f, label]
+    return p
+
+def fsel(data=[]): # (feature selection, using chi2)
+    """ Returns a {feature: p-value} dict 
+        for the given list of (vector, label)-tuples.
+    """
+    from scipy.stats import chi2_contingency as chi2
+
+    f1 = collections.defaultdict(float) # {label: count}
+    f2 = collections.defaultdict(float) # {feature: count}
+    f3 = collections.defaultdict(float) # {feature, label: count}
+    p  = {}
+    for v, label in data:
+        f1[label] += 1
+    for v, label in data:
+        for f in v:
+            f2[f] += 1
+            f3[f, label] += 1
+    for f in f2:
+        p[f] = chi2([[f1[label] - f3[f, label] or 0.1 for label in f1],
+                     [            f3[f, label] or 0.1 for label in f1]])[1]
+    return p
+
+def topn(p, n=10, reverse=False):
+    """ Returns an iterator of (key, value)-tuples
+        ordered by the highest values in the dict.
+    """
+    for k in sorted(p, key=p.get, reverse=not reverse)[:n]:
+        yield k, p[k]
+
+# data = [
+#     ({'yawn': 1, 'meow': 1}, 'cat'),
+#     ({'yawn': 1           }, 'dog')] * 10
+# 
+# bias = pp(data)
+# 
+# for f, p in fsel(data).items():
+#     if p < 0.01:
+#         print(f)
+#         print(top(bias[f]))
+#         # 'meow' is significant (always predicts 'cat')
+#         # 'yawn' is independent (50/50 'dog' and 'cat')
+
 #---- MODEL ---------------------------------------------------------------------------------------
 # The Model base class is inherited by Perceptron, DecisionTree, ...
 
@@ -1179,6 +1582,81 @@ class NaiveBayes(Model):
 
 Bayes = NaiveBayes
 
+#---- K-NEAREST NEIGHBORS --------------------------------------------------------------------------
+# The k-Nearest Neighbors model stores all training examples (memory-based or "lazy").
+# Predicting the label of a new example is then based on the distance to each of them.
+
+class KNN(Model):
+    
+    def __init__(self, examples=[]):
+        """ k-Nearest Neighbors learning algorithm.
+        """
+        self.labels   = collections.defaultdict(int)
+        self.examples = []
+
+        for v, label in examples:
+            self.train(v, label)
+
+    def train(self, v, label=None):
+        self.examples.append((v, label))
+        self.labels[label] += 1
+
+    def predict(self, v, k=10+1, distance=cos):
+        """ Returns a dict of (label, probability)-items.
+        """
+        p = dict.fromkeys(self.labels, 0.0)
+        # random breaks equidistant ties:
+        q = ((distance(v, x), random.random(), label) for x, label in self.examples)
+        q = heapq.nsmallest(k, q)
+        for d, _, label in q:
+            p[label] += 1
+
+        s = sum(p.values()) or 1
+        for label in p:
+            p[label] /= s
+        return p
+
+# examples = [
+#     ("'I know some good games we could play,' said the cat.", 'seuss' ),
+#     ("'I know some new tricks,' said the cat in the hat."   , 'seuss' ),
+#     ("They roared their terrible roars"                     , 'sendak'),
+#     ("They gnashed their terrible teeth"                    , 'sendak'),
+# ]
+# v, labels = zip(*examples) # unzip
+# v = map(tok, v)
+# v = map(wc, v)
+# v = map(unit, v)
+# v = list(tfidf(v))
+# m = KNN(zip(v, labels))
+# 
+# x = wc(tok('They rolled their terrible eyes'))
+# x = wc(tok("'Look at me! Look at me now!' said the cat."))
+# 
+# y = m.predict(x, k=1, distance=lambda v1, v2: 1 - dot(v1, v2))
+# print(y)
+
+class MLKNN(KNN):
+
+    def predict(self, v, k=10+1, distance=cos):
+        """ k-Nearest Neighbors learning algorithm (multi-label).
+        """
+        p = collections.Counter()
+        n = min(k, sum(self.labels.values()))
+        for labels, w in KNN.predict(self, v, k, distance).items():
+            for label in labels:
+                if w > 0:
+                    p[label] += 1.0 / n
+        return p
+
+# m = [
+#     ({'woof':1}, ('dog', 'canine')),
+#     ({'meow':1}, ('cat', 'feline')),
+#     ({'meow':1}, ('cat',)),
+# ]
+# m = MLKNN(m)
+# 
+# print(m.predict({'meow':1}, k=2))
+
 #---- DECISION TREE --------------------------------------------------------------------------------
 # The Decision Tree model is very easy to interpret (but it trains very slow).
 # It is based on a directed graph with features as nodes and labels as leaves.
@@ -1256,41 +1734,37 @@ class DecisionTree(Model):
         p = freq(p)
         return p
 
-    def graph(self):
-        """ Returns a Graph with split features as nodes.
-        """
-        g = Graph(directed=True)
-        n = {} # {id(node): breadth-first unique int}
-
-        q = [self.root]
-        while q:
-            n1 = q.pop()
-            for n2, e in ((n1[1], 'Y'), (n1[2], 'N')):
-                i = n.setdefault(id(n1), len(n))
-                j = n.setdefault(id(n2), len(n))
-
-                if isinstance(n2, list):
-                    q.append(n2)
-                    n2 = {n2[0]: n2[3]}
-                for f, w in n2.items():
-                    k1 = '#%i %s' % (i, n1[0])
-                    k2 = '#%i %s' % (j, f)
-                    w /= float(self.root[3])
-                    g.add(k1, k2, weight=w, type=e) # #1 meow -- Y 1.0 --> #2 cat
-        return g
+def rules(tree):
+    """ Returns an iterator of edges for the given DecisionTree,
+        where each edge is a (node1, node2, weight, type)-tuple.
+    """
+    k = {} # {id(node): int}
+    q = [tree.root]
+    while q:
+        n1 = q.pop(0) # bfs
+        for n2, e in ((n1[1], True), (n1[2], False)):
+            k1 = '#%i ' % k.setdefault(id(n1), len(k))
+            k2 = '#%i ' % k.setdefault(id(n2), len(k))
+            if isinstance(n2, list):
+                q.append(n2)
+                n2 = {n2[0]: n2[3]}
+            for f, w in n2.items():
+                yield k1 + n1[0], k2 + f, float(w) / tree.root[3], e
+                # ('#1 meow', '#2 cat', 0.5, True )
+                # ('#1 meow', '#3 dog', 0.5, False)
 
 #---- DECISION TREE ENSEMBLE -----------------------------------------------------------------------
 # Multiple decision trees with majority vote consensus correct overfitting errors (lower variance).
 
 class DecisionTreeEnsemble(Model):
 
-    def __init__(self, examples=[], m=10, min=5, max=100, **kwargs):
+    def __init__(self, examples=[], n=10, min=5, max=100, **kwargs):
         """ Decision Tree ensemble (Random Forest algorithm).
         """
         self.labels = collections.Counter(label for v, label in examples)
         self.trees  = []
 
-        for _ in range(m):
+        for _ in range(n):
             # Breiman's algorithm.
             # Random sample of features.
             # Random sample of examples (with replacement).
@@ -1324,127 +1798,6 @@ class DecisionTreeEnsemble(Model):
         return m
 
 RandomForest = DecisionTreeEnsemble
-
-#---- FEATURES ------------------------------------------------------------------------------------
-# Character 3-grams are sequences of 3 successive characters: 'hello' => 'hel', 'ell', 'llo'.
-# Character 3-grams are useful as training examples for text classifiers,
-# capturing 'small words' such as pronouns, smileys, word suffixes (-ing)
-# and language-specific letter combinations (oeu, sch, tch, ...)
-
-def chngrams(s, n=3):
-    """ Returns an iterator of character n-grams.
-    """
-    if inspect.isgenerator(s):
-        s = list(s)
-    for i in range(len(s) - n + 1):
-        yield s[i:i+n] # 'hello' => 'hel', 'ell', 'llo'
-
-def ngrams(s, n=2):
-    """ Returns an iterator of word n-grams.
-    """
-    if isinstance(s, basestring):
-        s = s.split()
-    for w in chngrams((w for w in s if w), n):
-        yield tuple(w)
-
-def skipgrams(s, n=5):
-    """ Returns an iterator of (word, context)-tuples.
-    """
-    if isinstance(s, basestring):
-        s = s.split()
-    for i, w in enumerate(s):
-        yield w, tuple(s[max(0,i-n):i] + s[i+1:i+1+n])
-
-def v(s, features=('ch3',)): # (vector)
-    """ Returns a dict of character trigrams in the given string.
-        Can be used for Perceptron.train(v(s)) or .predict(v(s)).
-    """
-  # s = s.lower()
-  # s = anon(s)
-    v = collections.Counter()
-    v[''] = 1 # bias
-    for f in features:
-        if f[0] == 'c': # 'c1' (punctuation, diacritics)
-            v.update(chngrams(s, n=int(f[-1])))
-        if f[0] == 'w': # 'w1'
-            v.update(  ngrams(s, n=int(f[-1])))
-    return v
-
-vec = v
-
-# data = []
-# for id, username, tweet, date in csv(cd('spam.csv')):
-#     data.append((v(tweet), 'spam'))
-# for id, username, tweet, date in csv(cd('real.csv')):
-#     data.append((v(tweet), 'real'))
-# 
-# p = Perceptron(examples=data, n=10)
-# p.save(open('spam-model.json', 'w'))
-# 
-# print(p.predict(v('Be Lazy and Earn $3000 per Week'))) # {'real': 0.15, 'spam': 0.85}
-
-#---- FEATURE SELECTION ---------------------------------------------------------------------------
-# Feature selection identifies the best features, by evaluating their statistical significance.
-
-def pp(data=[]): # (posterior probability)
-    """ Returns a {feature: {label: frequency}} dict 
-        for the given list of (vector, label)-tuples.
-    """
-    f1 = collections.defaultdict(float) # {label: count}
-    f2 = collections.defaultdict(float) # {feature: count}
-    f3 = collections.defaultdict(float) # {feature, label: count}
-    p  = {}
-    for v, label in data:
-        f1[label] += 1
-    for v, label in data:
-        for f in v:
-            f2[f] += 1
-            f3[f, label] += 1 / f1[label]
-    for label in f1:
-        for f in f2:
-            p.setdefault(f, {})[label] = f1[label] / f2[f] * f3[f, label]
-    return p
-
-def fsel(data=[]): # (feature selection, using chi2)
-    """ Returns a {feature: p-value} dict 
-        for the given list of (vector, label)-tuples.
-    """
-    from scipy.stats import chi2_contingency as chi2
-
-    f1 = collections.defaultdict(float) # {label: count}
-    f2 = collections.defaultdict(float) # {feature: count}
-    f3 = collections.defaultdict(float) # {feature, label: count}
-    p  = {}
-    for v, label in data:
-        f1[label] += 1
-    for v, label in data:
-        for f in v:
-            f2[f] += 1
-            f3[f, label] += 1
-    for f in f2:
-        p[f] = chi2([[f1[label] - f3[f, label] or 0.1 for label in f1],
-                     [            f3[f, label] or 0.1 for label in f1]])[1]
-    return p
-
-def topn(p, n=10, reverse=False):
-    """ Returns an iterator of (key, value)-tuples
-        ordered by the highest values in the dict.
-    """
-    for k in sorted(p, key=p.get, reverse=not reverse)[:n]:
-        yield k, p[k]
-
-# data = [
-#     ({'yawn': 1, 'meow': 1}, 'cat'),
-#     ({'yawn': 1           }, 'dog')] * 10
-# 
-# bias = pp(data)
-# 
-# for f, p in fsel(data).items():
-#     if p < 0.01:
-#         print(f)
-#         print(top(bias[f]))
-#         # 'meow' is significant (always predicts 'cat')
-#         # 'yawn' is independent (50/50 'dog' and 'cat')
 
 #---- ACCURACY ------------------------------------------------------------------------------------
 # Predicted labels will often include false positives and false negatives.
@@ -1648,7 +2001,7 @@ class calibrate(Model):
         """ Returns the label's calibrated probability (0.0-1.0).
         """
         p = self._model.predict(v)[self._label]
-        p = self._f[round(p, 2)]
+        p = self._f[p]
         return p
 
     def save(self, f):
@@ -1802,289 +2155,6 @@ def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
 
 # print(hilite('loud meowing', {'loud': 1.0}))
 
-#---- VECTOR --------------------------------------------------------------------------------------
-# A vector is a {feature: weight} dict, with n features, or n dimensions.
-
-# If {'x1':1, 'y1':2} and {'x2':3, 'y2':4} are two points in 2D,
-# then their distance is: sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2).
-# The distance can be calculated for points in 3D, 4D, or in nD.
-
-# Another distance metric is the angle between vectors (cosine).
-# Another distance metric is the difference between vectors.
-# For text features cos() works well, but diff() is fastest.
-
-# Vector weights are assumed to be non-negative, especially 
-# when using cos(), diff(), knn(), tf(), tfidf() and freq().
-
-def index(data=[]):
-    """ Returns a dict of (id(vector), label)-items
-        for the given list of (vector, label)-tuples.
-    """
-    return {id(v): label for v, label in data}
-
-def distance(v1, v2):
-    """ Returns the distance of the given vectors.
-    """
-    return sum((v1.get(f, 0) - v2.get(f, 0)) ** 2 for f in features((v1, v2))) ** 0.5
-
-def dot(v1, v2):
-    """ Returns the dot product of the given vectors.
-    """
-    return sum(v1.get(f, 0) * w for f, w in v2.items())
-
-def norm(v):
-    """ Returns the norm of the given vector.
-    """
-    return sum(w ** 2 for f, w in v.items()) ** 0.5
-
-def cos(v1, v2):
-    """ Returns the angle of the given vectors (0.0-1.0).
-    """
-    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1.0) # cosine distance
-
-def diff(v1, v2):
-    """ Returns the difference of the given vectors.
-    """
-    v1 = set(filter(v1.get, v1)) # non-zero
-    v2 = set(filter(v2.get, v2))
-    return 1 - len(v1 & v2) / float(len(v1 | v2) or 1)
-
-def knn(v, vectors=[], k=3, distance=cos):
-    """ Returns the k nearest neighbors from the given list of vectors.
-    """
-    nn = ((distance(v, x), random.random(), x) for x in vectors)
-    nn = heapq.nsmallest(k, nn)
-  # nn = sorted(nn)[:k]
-    nn = [(1 - d, x) for d, r, x in nn]
-    return nn
-
-def binary(v, cutoff=0.0):
-    """ Returns a vector with binary weights (0 or 1).
-    """
-    return {f: int(w > cutoff) for f, w in v.items()}
-
-def sparse(v, tol=5):
-    """ Returns a vector with non-zero weight features.
-    """
-    return {f: w for f, w in v.items() if round(w, tol) != 0}
-
-def onehot(v): # {'age': '25+'} => {('age', '25+'): 1}
-    """ Returns a vector with non-categorical features.
-    """
-    return dict((f, w) if isinstance(w, (int, float)) else ((f, w), 1) for f, w in v.items())
-
-def reduce(v, features=set()):
-    """ Returns a vector without the given features.
-    """
-    return {f: w for f, w in v.items() if f not in features}
-
-def scale(v, x=0.0, y=1.0):
-    """ Returns a vector with scaled weights (between x and y).
-    """
-    a = min(v.values())
-    b = max(v.values())
-    return {f: float(w - a) / (b - a) * (y - x) + x for f, w in v.items()}
-
-def unit(v):
-    """ Returns a vector with normalized weights (length 1).
-    """
-    n = norm(v) or 1.0
-    return {f: w / n for f, w in v.items()}
-
-def normalize(v):
-    """ Returns a vector with normalized weights (sum to 1).
-    """
-    return tf(v)
-
-def tf(v):
-    """ Returns a vector with normalized weights
-        (term frequency).
-    """
-    n = sum(v.values())
-    n = float(n or 1)
-    return {f: w / n for f, w in v.items()}
-
-def tfidf(vectors=[]):
-    """ Returns an iterator of vectors with normalized weights
-        (term frequency–inverse document frequency).
-    """
-    df = collections.Counter() # stopwords have higher df (I, the, or, ...)
-    if not isinstance(vectors, list):
-        vectors = list(vectors)
-    for v in vectors:
-        df.update(v)
-    for v in vectors:
-        yield {f: w / float(df[f] or 1) for f, w in v.items()}
-
-def features(vectors=[]):
-    """ Returns the set of features for all vectors.
-    """
-    return set().union(*vectors)
-
-def centroid(vectors=[]):
-    """ Returns the mean vector for all vectors.
-    """
-    v = list(vectors)
-    n = float(len(v))
-    return {f: sum(v.get(f, 0) for v in v) / n for f in features(v)}
-
-def freq(a):
-    """ Returns the relative frequency distribution of items in the list.
-    """
-    f = collections.Counter(a)
-    f = collections.Counter(normalize(f))
-    return f
-
-def majority(a, default=None):
-    """ Returns the most frequent item in the given list (majority vote).
-    """
-    f = collections.Counter(a)
-    try:
-        m = max(f.values())
-        return random.choice([k for k, v in f.items() if v == m])
-    except:
-        return default
-
-# print(majority(['cat', 'cat', 'dog']))
-
-# examples = [
-#     ("'I know some good games we could play,' said the cat.", 'seuss'),
-#     ("'I know some new tricks,' said the cat in the hat."   , 'seuss'),
-#     ("They roared their terrible roars"                     , 'sendak'),
-#     ("They gnashed their terrible teeth"                    , 'sendak'),
-# ]
-# 
-# v, labels = zip(*examples) # = unzip
-# v = list(wc(tok(v)) for v in v)
-# v = list(tfidf(v))
-# 
-# labels = index(zip(v, labels)) # { vector id: label }
-# 
-# x = wc(tok('They rolled their terrible eyes'))
-# x = wc(tok("'Look at me! Look at me now!' said the cat."))
-# 
-# for w, nn in knn(x, v, k=3):
-#     w = round(w, 2)
-#     print(w, labels[id(nn)])
-
-#---- VECTOR CLUSTERING ---------------------------------------------------------------------------
-# The k-means clustering algorithm is an unsupervised machine learning method
-# that partitions a given set of vectors into k clusters, so that each vector
-# belongs to the cluster with the nearest center (mean).
-
-euclidean = distance
-spherical = cos
-
-def ss(vectors=[], distance=euclidean):
-    """ Returns the sum of squared distances to the center (variance).
-    """
-    v = list(vectors)
-    c = centroid(v)
-    return sum(distance(v, c) ** 2 for v in v)
-
-def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
-    """ Returns a list of k lists of vectors, clustered by distance.
-    """
-    vectors = list(vectors)
-    optimum = None
-
-    for _ in range(max(n, 1)):
-
-        # Random initialization:
-        g = list(shuffled(vectors))
-        g = list(g[i::k] for i in range(k))[:len(g)]
-
-        # Lloyd's algorithm:
-        for _ in range(iterations):
-            m = [centroid(v) for v in g]
-            e = []
-            for m1, g1 in zip(m, g):
-                for v in g1:
-                    d1 = distance(v, m1)
-                    d2, g2 = min((distance(v, m2), g2) for m2, g2 in zip(m, g))
-                    if d2 < d1:
-                        e.append((g1, g2, v)) # move to nearer centroid
-            for g1, g2, v in e:
-                g1.remove(v)
-                g2.append(v)
-            if not e: # converged?
-                break
-
-        # Optimal solution = lowest within-cluster sum of squares:
-        optimum = min(optimum or g, g, key=lambda g: sum(ss(g, distance) for g in g))
-    return optimum
-
-# data = [
-#     {'woof': 1},
-#     {'woof': 1},
-#     {'meow': 1}
-# ]
-# 
-# for cluster in kmeans(data, k=2):
-#     print(cluster) # cats vs dogs
-
-#---- VECTOR MATRIX -------------------------------------------------------------------------------
-# For performance, many algorithms for statistical analysis use NumPy arrays.
-
-def matrix(vectors=[]):
-    """ Returns a 2D numpy.ndarray of the given vectors, 
-        with columns ordered by sorted(features(vectors).
-    """
-    import numpy
-
-    f = features(vectors)
-    f = sorted(f)
-    f = enumerate(f)
-    f = {v: i for i, v in f}
-    m = numpy.zeros((len(vectors), len(f)))
-    for v, a in zip(vectors, m):
-        a.put(map(f.__getitem__, v), v.values())
-    return m
-
-class svd(list):
-    """ Returns a list of vectors, each with n concepts,
-        where each concept is a combination of features.
-        (Singular Value Decomposition)
-    """
-    def __init__(self, vectors=[], n=2):
-        import numpy
-
-        f  = dict(enumerate(sorted(features(vectors))))
-        m  = matrix(vectors)
-        m -= numpy.mean(m, 0)
-        # u:  vectors x concepts
-        # v: concepts x features
-        u, s, v = numpy.linalg.svd(m, full_matrices=False)
-
-        self.extend(
-            sparse({   i  : w * abs(w) for i, w in enumerate(a) }) for a in u[:,:n]
-        )
-        self.concepts = tuple(
-            sparse({ f[i] : w * abs(w) for i, w in enumerate(a) }) for a in v[:n]
-        )
-        self.features = normalize(
-            sparse({ f[i] : 1 * abs(w) for i, w in enumerate(numpy.dot(s[:n], v[:n]))
-        }))
-
-    @property
-    def cs(self):
-        return self.concepts
-
-    @property
-    def pc(self):
-        return self.features
-
-pca = svd # (Principal Component Analysis)
-
-# data = [
-#     {'x': 0.0, 'y': 1.1, 'z': 1.0},
-#     {'x': 0.0, 'y': 1.0, 'z': 0.0}
-# ]
-# 
-# print(svd(data, n=2))
-# print(svd(data, n=2).cs[0])
-# print(svd(data, n=1).pc)
-
 ##### NLP #########################################################################################
 
 #---- TEXT ----------------------------------------------------------------------------------------
@@ -2118,7 +2188,7 @@ sim = similarity
 def readability(s):
     """ Returns the readability of the given string (0.0-1.0).
     """
-    # Flesch Reading Ease; Farr, Jenkins & Patterson's formula.
+    # Flesch Reading Ease; Farr, Jenkins & Patterson's metric.
 
     def syllables(w, v="aeiouy"):
       # syllables('several') => 2, se-ve-ral
@@ -3314,7 +3384,7 @@ def annotate(path, delay=1, key=None):
     return Annotation(
         r1.get('description', '').strip(),
         r1.get('locale', ''),
-        {w['description']: round(w['score'], 2) for w in r2 + r3},
+        {w['description']: w['score'] for w in r2 + r3},
         (r4['latitude'], r4['longitude']) if r4 else None
     )
 
@@ -4071,6 +4141,21 @@ def decode(s):
   # s = s.replace('&#13;'  , '\r')
     s = re.sub(r'https?://.*?(?=\s|$)', \
         lambda m: urldecode(m.group()), s) # '%3A' => ':' (in URL)
+    return s
+
+def docx(path):
+    """ Returns the given Word-file (.docx) as a plain text string.
+    """
+    x = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+    f = zipfile.ZipFile(path)
+    f = f.open('word/document.xml')
+    t = ElementTree.parse(f)
+    s = ''
+    for e in t.iter(x + 'p'):
+        for e in e.iter(x + 't'):
+            s += e.text
+        s = s.rstrip()
+        s = s + '\n\n'
     return s
 
 #---- NEWS ----------------------------------------------------------------------------------------
