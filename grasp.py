@@ -83,6 +83,7 @@ import datetime
 import random
 import math
 import heapq
+import bisect
 
 PY2 = sys.version.startswith('2')
 PY3 = sys.version.startswith('3')
@@ -230,7 +231,7 @@ def asynchronous(f, callback=lambda v, e: None, daemon=True):
 # pow(2, 2)
 # pow(2, 3) #.join(1)
 # 
-# for i in range(10):
+# for _ in range(10):
 #     time.sleep(0.1)
 #     print('...')
 
@@ -453,7 +454,7 @@ def unique(a):
 def chunks(a, n=2):
     """ Returns an iterator of tuples of n consecutive values.
     """
-    return zip(*(a[i::n] for i in range(n)))
+    return iter(zip(*(a[i::n] for i in range(n))))
 
 # for v in chunks([1, 2, 3, 4], n=2): # (1, 2), (3, 4)
 #     print(v)
@@ -470,26 +471,21 @@ def nwise(a, n=2):
 # for v in nwise([1, 2, 3, 4], n=2): # (1, 2), (2, 3), (3, 4)
 #     print(v)
 
-def choice(a, p=[]):
+def choices(a, weights=[], k=1):
     """ Returns a random element from the given list,
         with optional (non-negative) probabilities.
     """
-    p = list(p)
-    n = sum(p)
-    x = random.uniform(0, n)
-    if n == 0:
-        return random.choice(a)
-    for v, w in zip(a, p):
-        x -= w
-        if x <= 0:
-            return v
+    if weights:
+        n = 0
+        m = [] # cumsum
+        for w in weights:
+            n += w
+            m.append(n)
+        return [a[bisect.bisect(m, n * random.random())] for _ in range(k)]
+    else:
+        return [random.choice(a) for _ in range(k)]
 
-# f = {'a': 0, 'b': 0}
-# for i in range(100):
-#     v = choice(['a', 'b'], p=[0.9, 0.1])
-#     f[v] += 1
-# 
-# print(f)
+# print(choices(['a', 'b'], weights=[0.75, 0.25], k=10))
 
 #---- FILE ----------------------------------------------------------------------------------------
 # Temporary files are useful when a function takes a filename, but we have the data in the file.
@@ -1111,8 +1107,34 @@ def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
 # for cluster in kmeans(data, k=2):
 #     print(cluster) # cats vs dogs
 
-#---- VECTOR MATRIX -------------------------------------------------------------------------------
-# For performance, many algorithms for statistical analysis use NumPy arrays.
+#---- VECTOR DIMENSIONALITY -----------------------------------------------------------------------
+# Dimensionality reduction of vectors (i.e., fewer features) can speed up distance calculations.
+# This can be achieved by grouping related features (e.g., covariance) or by selecting features.
+
+def rp(vectors=[], n=100, distribution=(-1, +1)):
+    """ Returns a list of vectors, each with n features.
+        (Random Projection)
+    """
+    # Given a m x d matrix (m vectors, d features),
+    # build a d x n matrix from a Gaussian distribution.
+    # The dot product is the reduced vector space m x n.
+    h = features(vectors)
+    h = enumerate(h)
+    h = map(reversed, h)
+    h = dict(h) # {feature: int} hash
+    r = [[random.choice(distribution) for i in range(n)] for f in h]
+    p = []
+    for v in vectors:
+        p.append([])
+        for i in range(n):
+            x = 0
+            for f, w in v.items():
+                x += w * r[h[f]][i] # dot product
+            p[-1].append(x)
+    p = map(enumerate, p)
+    p = map(dict, p)
+    p = list(p)
+    return p
 
 def matrix(vectors=[]):
     """ Returns a 2D numpy.ndarray of the given vectors, 
@@ -1192,7 +1214,7 @@ def ngrams(s, n=2):
     """
     if isinstance(s, basestring):
         s = s.split()
-    for w in chngrams((w for w in s if w), n):
+    for w in chngrams(s, n):
         yield tuple(w)
 
 def skipgrams(s, n=5):
@@ -1203,7 +1225,7 @@ def skipgrams(s, n=5):
     for i, w in enumerate(s):
         yield w, tuple(s[max(0,i-n):i] + s[i+1:i+1+n])
 
-def v(s, features=('ch3',)): # (vector)
+def vectorize(s, features=('ch3',)): # (vector)
     """ Returns a dict of character trigrams in the given string.
         Can be used for Perceptron.train(v(s)) or .predict(v(s)).
     """
@@ -1222,32 +1244,30 @@ def v(s, features=('ch3',)): # (vector)
   # v = normalize(v)
     return v
 
-vec = v
+v = vec = vectorize
 
-def style(s):
+def style(s, bins=[0.01 * i for i in range(25+1)]): # (1% to 25%)
     """ Returns a dict of stylistic features in the given string 
-        (word length, sentence length, shouting, capitalization).
+        (word length, sentence length, capitalization, shouting).
     """
     v = collections.Counter()
     for f, w in (
-      ('+', r'[\w](?=\w{2})'), # word length
-      (' ', r'[\s]'         ), # words
-      ('.', r'[.!?]'        ), # sentences
-      (',', r'[,;:("-][^-)]'), # punctuation
-      ('^', r'[A-Z]'        ), # uppercase
-      ('!', r'[!]'          ), # shouting
-      ('@', r'[@#]'+u'😂😍😊')):
+      ('+', r'[\w](?=\w{5})'),  # word length
+      ('_', r'[\s]+'        ),  # words
+      ('.', r'[.!?]+'       ),  # sentences
+      ('^', r'[A-Z]'        ),  # uppercase
+      ('!', r'[!]{2}'       )): # shouting
         i = len(re.findall(w, s))
         j = len(s) * 1.0 or 1.0
         r = i / j
-        for p in (0, 0.01, 0.02, 0.03, 0.05, 0.1, 0.2, 0.3, 0.5, 0.9):
-            v['%s>%i%%' % (f, p * 100)] = int(r > p)
+        for p in bins:
+            v['%s>%i%%' % (f, p * 100)] = int(r > p) # +1-3%
     return v
 
 # data = []
-# for id, username, tweet, date in csv(cd('spam.csv')):
+# for id, tweet, date in csv(cd('spam.csv')):
 #     data.append((v(tweet), 'spam'))
-# for id, username, tweet, date in csv(cd('real.csv')):
+# for id, tweet, date in csv(cd('real.csv')):
 #     data.append((v(tweet), 'real'))
 # 
 # p = Perceptron(examples=data, n=10)
@@ -1265,7 +1285,7 @@ def pp(data=[]): # (posterior probability)
     f1 = collections.defaultdict(float) # {label: count}
     f2 = collections.defaultdict(float) # {feature: count}
     f3 = collections.defaultdict(float) # {feature, label: count}
-    p  = {}
+    p  = collections.Counter()
     for v, label in data:
         f1[label] += 1
     for v, label in data:
@@ -1286,7 +1306,7 @@ def fsel(data=[]): # (feature selection, using chi2)
     f1 = collections.defaultdict(float) # {label: count}
     f2 = collections.defaultdict(float) # {feature: count}
     f3 = collections.defaultdict(float) # {feature, label: count}
-    p  = {}
+    p  = collections.Counter()
     for v, label in data:
         f1[label] += 1
     for v, label in data:
@@ -1297,13 +1317,6 @@ def fsel(data=[]): # (feature selection, using chi2)
         p[f] = chi2([[f1[label] - f3[f, label] or 0.1 for label in f1],
                      [            f3[f, label] or 0.1 for label in f1]])[1]
     return p
-
-def topn(p, n=10, reverse=False):
-    """ Returns an iterator of (key, value)-tuples
-        ordered by the highest values in the dict.
-    """
-    for k in sorted(p, key=p.get, reverse=not reverse)[:n]:
-        yield k, p[k]
 
 # data = [
 #     ({'yawn': 1, 'meow': 1}, 'cat'),
@@ -1472,7 +1485,7 @@ class Perceptron(Model):
         self._t = 1
         self._p = iavg(0)
 
-        for i in range(n):
+        for _ in range(n):
             for v, label in shuffled(examples):
                 self.train(v, label)
 
@@ -1580,7 +1593,7 @@ class NaiveBayes(Model):
             p[label] /= s
         return p
 
-Bayes = NaiveBayes
+NB = NaiveBayes
 
 #---- K-NEAREST NEIGHBORS --------------------------------------------------------------------------
 # The k-Nearest Neighbors model stores all training examples (memory-based or "lazy").
@@ -1627,7 +1640,7 @@ class KNN(Model):
 # v = map(wc, v)
 # v = map(unit, v)
 # v = list(tfidf(v))
-# m = KNN(zip(v, labels))
+# m = KNN(list(zip(v, labels)))
 # 
 # x = wc(tok('They rolled their terrible eyes'))
 # x = wc(tok("'Look at me! Look at me now!' said the cat."))
@@ -2549,7 +2562,8 @@ def ctx(*w):
         else:
             v.add('$ %+d %s' % (i, w[-3:]))            # token suffix left/right
             v.add('? %+d %s' % (i, tag   ))            # token tag
-    return v
+
+    return dict.fromkeys(v, 1)
 
 # print(ctx(('The', 'DET'), ('cat', 'NOUN'), ('sat', 'VERB'))) # context of 'cat'
 #
@@ -2690,21 +2704,15 @@ def universal(w, tag, tagset=WEB):
 # Pierre/NNP Vinken/NNP ,/, 61/CD years/NNS old/JJ ,/, will/MD join/VB the/DT board/NN 
 # as/IN a/DT nonexecutive/JJ director/NN Nov./NNP 29/CD ./.
 
-# corpus = cd('/corpora/wsj.txt')
-# corpus = u(open(corpus).read())
-# corpus = corpus.split('\n')
-# corpus = corpus[:48000] # ~ 1M tokens
-
-# Create context vectors from WSJ sentences, using the simplified universal tagset.
-
+# WSJ = u(open(cd('/corpora/wsj.txt')).read())
+# WSJ = WSJ.split('\n')
+# WSJ = WSJ[:48000] # ~ 1M tokens
+# 
 # data = []
-# for s in corpus:
+# for s in WSJ:
 #     for w in nwise(Tagged('/ / %s / /' % s), n=5):
 #         w = [universal(*w) for w in w]
 #         data.append((ctx(*w), w[2][1]))
-# 
-# print('%s sentences' % len(corpus))
-# print('%s tokens'    % len(data))
 # 
 # print(kfoldcv(Perceptron, data, k=3, n=5, weighted=True, debug=True)) # 0.96 0.96
 # 
@@ -2823,22 +2831,17 @@ def chunk(pattern, text, replace=[]):
 
 # for m in \
 #   chunk('ADJ', 
-#     tag(tok('A big, black cat.'))):
-#      print(u(m))
+#    tag(tok('A big, black cat.'))):
+#     print(u(m))
 
 # for m, g1, g2 in \
 #   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag(tok("The cats'll be hungry."))): 
-#     print(u(g1), u(g2))
-
-# for m, g1, g2 in \
-#   chunk('DET? (NOUN) AUX? BE (-ry)', 
-#     tag(tok("The boss'll be angry!"))):
+#    tag(tok("The cats'll be hungry."))): 
 #     print(u(g1), u(g2))
 
 # for m, g1, g2, g3 in \
 #   chunk('(NOUN|PRON) BE ADV? (ADJ) than (NOUN|PRON)', 
-#     tag(tok("Cats are more stubborn than dogs."))):
+#    tag(tok("Cats are more stubborn than dogs."))):
 #     print(u(g1), u(g2), u(g3))
 
 def constituents(text, language='en'):
@@ -2949,6 +2952,75 @@ def sentiment(s, language='en'):
 def positive(s, language='en', threshold=0.1):
     # = 75% (Pang & Lee polarity dataset v1.0)
     return sentiment(s, language) >= threshold
+
+#---- WORD EMBEDDING ------------------------------------------------------------------------------
+
+def cooccurrence(s, window=2, ignore=set()):
+    """ Returns a dict of (word, context)-items, where context is 
+        a dict of preceding and successive words and their counts.
+    """
+    f = collections.defaultdict(collections.Counter) # {word1: {word2: count}}
+    i = window
+    s = s.split()
+    s = [None] * i + s
+    s+= [None] * i
+
+    for w in ngrams(s, i * 2 + 1):
+        for j in range(len(w)):
+            if w[i] in ignore:
+                break
+            if w[j] in ignore:
+                continue
+            if w[j] is None:
+                continue
+            if i != j:
+                f[w[i]][w[j]] += 1
+    return f
+
+cooc = cooccurrence
+
+# print(cooc('the cat sat on the mat', 1))['the']
+
+class Embedding(dict):
+
+    def __init__(self, s, m=10000, n=100, reduce=lambda v, n: [v.most_common(n) for v in v], **kwargs):
+        """ Returns a dict of (word, context)-items, where context is 
+            a dict of preceding and successive words and their counts.
+        """
+        if s:
+            a = cooc(s, **kwargs)
+            a = a.items()
+            a = sorted(a, key=lambda wv: sum(wv[1].values()))
+            a = reversed(a)
+            a = list(a)[:m]
+            w, v = zip(*a)
+            v = reduce(v, n)
+            v = map(dict, v)
+            a = zip(w, v)
+            self.update(a)
+
+    def similar(self, w, n=10, distance=cos):
+        """ Returns a list of n (similarity, word)-tuples.
+        """
+        v1 = self.get(w, {})
+        q = ((1 - distance(v1, v2), w2) for w2, v2 in self.items())
+        q = heapq.nlargest(n, q)
+        return q
+
+    def save(self, f):
+        f.write(json.dumps(self))
+
+    @classmethod
+    def load(cls, f):
+        e = cls('')
+        e.update(json.loads(f.read()))
+        return e
+
+# m = Embedding(open('wikipedia.txt').read())
+# for d, w in m.similar('king', 10):
+#     print(d, w)
+
+# king = president, emperor, queen, leader, ...
 
 #---- WORDNET -------------------------------------------------------------------------------------
 # WordNet is a free lexical database of synonym sets, and relations between synonym sets.
@@ -3460,7 +3532,7 @@ class Twitter(object):
         """ Returns an iterator of tweets.
         """
         id = ''
-        for i in range(10):
+        for _ in range(10):
             k = key or keys['Twitter']
             r = 'https://api.twitter.com/1.1/search/tweets.json', {
                 'tweet_mode' : 'extended',
@@ -3806,7 +3878,7 @@ class Element(Node):
     @property
     def successors(self):
         if self.parent:
-            for n in self.parent.children[self.parent.children.index(self)+1:]:
+            for n in self.parent.children[self.parent.children.index(self) + 1:]:
                 if isinstance(n, Element):
                     yield n
 
@@ -4866,7 +4938,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
         """
         g = Graph(self._directed)
         g.add(n)
-        for i in range(depth):
+        for _ in range(depth):
             for e in [e for e in self.edges if not e in g and e.node1 in g or e.node2 in g]:
                 g.add(*e)
         return g
@@ -5044,7 +5116,7 @@ def visualize(g, **kwargs):
 
 # g = Graph()
 # n = range(200)
-# for i in range(200):
+# for _ in range(200):
 #     g.add(
 #         n1=random.choice(n), 
 #         n2=random.choice(n))
