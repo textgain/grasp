@@ -153,7 +153,7 @@ else:
 def printable(cls):
     """ @printable class defines class.__unicode__ in Python 2.
     """
-    if sys.version.startswith('2'):
+    if PY2:
         if hasattr(cls, '__str__'):
             cls.__unicode__ = cls.__str__
             cls.__str__ = lambda self: self.__unicode__().encode('utf-8')
@@ -578,23 +578,24 @@ csvlib.field_size_limit(1000000000)
 class CSV(table):
 
     @classmethod
-    def rows(cls, path, separator=','):
+    def rows(cls, path, separator=',', encoding='utf-8'):
         """ Returns the given .csv file as an iterator of rows, 
             where each row is a list of values.
         """
-        try:
-            f = open(path, newline='')
-        except TypeError:
-            f = open(path, 'rU')
-        try:
-            s = next(f)
-            s = s.lstrip('\ufeff') # BOM
-            s = s.lstrip('\xef\xbb\xbf')
-            f = itertools.chain((s,), f)
-        except StopIteration:
-            pass
-        for r in csvlib.reader(f, delimiter=separator):
-            yield [u(v) for v in r]
+        f = open(path, 'rb')
+        f = (s.replace(b'\r\n', b'\n') for s in f)
+        f = (s.replace(b'\r'  , b'\n') for s in f)
+        s = next(f, b'').lstrip(b'\xff\xfe') # BOM
+        f = itertools.chain((s,), f)
+        e = lambda s: u(s, encoding)
+
+        if PY3:
+            f = map(e, f)
+            for r in csvlib.reader(f, delimiter=separator):
+                yield r
+        else:
+            for r in csvlib.reader(f, delimiter=separator):
+                yield map(e, r)
 
     def __init__(self, name='', separator=',', rows=[]):
         """ Returns the given .csv file as a list of rows, 
@@ -618,16 +619,6 @@ class CSV(table):
         f = codecs.open(name or self.name, 'w', encoding='utf-8')
         f.write('\n'.join(a))
         f.close()
-
-    def update(self, rows=[], index=0):
-        """ Appends the rows that have no duplicates in the given column(s).
-        """
-        u = set(map(repr, self[:,index])) # unique + hashable slices (slow)
-        for r in rows:
-            k = repr(r[index])
-            if k not in u:
-                self.append(r)
-                u.add(k)
 
     def clear(self):
         list.__init__(self, [])
@@ -658,7 +649,7 @@ def cd(*args):
     p = os.path.join(p, *args)
     return p
 
-# print(cd('test.csv'))
+# print(cd('loc.csv'))
 
 # for code, state, adj, region, gov, city, lang, rating in csv(cd('loc.csv')):
 #     print(state)
@@ -1662,13 +1653,13 @@ class MLKNN(KNN):
         return p
 
 # m = [
-#     ({'woof':1}, ('dog', 'canine')),
-#     ({'meow':1}, ('cat', 'feline')),
-#     ({'meow':1}, ('cat',)),
+#     ({'woof': 1}, ('dog', 'canine')),
+#     ({'meow': 1}, ('cat', 'feline')),
+#     ({'meow': 1}, ('cat',)),
 # ]
 # m = MLKNN(m)
 # 
-# print(m.predict({'meow':1}, k=2))
+# print(m.predict({'meow': 1}, k=2))
 
 #---- DECISION TREE --------------------------------------------------------------------------------
 # The Decision Tree model is very easy to interpret (but it trains very slow).
@@ -2608,7 +2599,7 @@ class Tagged(list):
 
 TAGGER = LazyDict() # {'en': Model}
 
-TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json')))
+TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json'), 'rb'))
 
 lexicon = { # top 10
     'en': {
@@ -2919,7 +2910,7 @@ intensifiers = {
 }
 
 for f in glob.glob(cd('*-pol.json')):
-    polarity[f.split('-')[-2][-2:]] = json.load(open(f))
+    polarity[f.split('-')[-2][-2:]] = json.load(open(f, 'rb'))
 
 def sentiment(s, language='en'):
     """ Returns the polarity of the string as a float,
@@ -2954,6 +2945,11 @@ def positive(s, language='en', threshold=0.1):
     return sentiment(s, language) >= threshold
 
 #---- WORD EMBEDDING ------------------------------------------------------------------------------
+# Word embedding is a combination of context vectors and dimensionality reduction.
+# For each word in a large amount of text, the context vector represents a word's
+# preceding and successive words (context). Distance between vectors = semantics.
+# Context vectors can have many features, so dimension reduction is used to scale
+# down the model in memory size and computation time, while preserving distances.
 
 def cooccurrence(s, window=2, ignore=set()):
     """ Returns a dict of (word, context)-items, where context is 
@@ -3016,7 +3012,7 @@ class Embedding(dict):
         e.update(json.loads(f.read()))
         return e
 
-# m = Embedding(open('wikipedia.txt').read())
+# m = Embedding(open('wp.txt').read())
 # for d, w in m.similar('king', 10):
 #     print(d, w)
 
