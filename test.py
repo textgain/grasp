@@ -113,6 +113,8 @@ assert plaintext(e2, keep={'a': []}              ) == u'<a>x</a>'
 assert plaintext(e2, keep={'a': ['href']}        ) == u'<a href="http://www.site.com">x</a>'
 assert plaintext(e2, ignore='a'                  ) == u''
 assert plaintext(u'<a>b</a>\nc'                  ) == u'b c'
+assert plaintext('<a>b </a>c'                    ) == u'b c'
+assert plaintext('<p>b </p>c'                    ) == u'b\n\nc'
 
 assert encode  (u'<a> & <b>'                     ) == u'&lt;a&gt; &amp; &lt;b&gt;'
 assert decode  (u'&lt;a&gt; &amp; &lt;b&gt;'     ) == u'<a> & <b>'

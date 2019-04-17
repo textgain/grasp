@@ -118,6 +118,7 @@ else:
     import cookielib
 
 if PY3:
+    import urllib
     import urllib.request as urllib2
     import urllib.parse as urlparse
     URLError, Request, urlopen, urlencode, urldecode, urlquote = (
@@ -361,15 +362,15 @@ class Log(collections.deque, logging.Handler):
         self.date   = date
 
     def emit(self, r):
-        r = {
-            'time' : r.created + r.relativeCreated,
-            'type' : r.levelname.lower(),
-         'message' : r.getMessage(),
-        'function' : r.funcName,
-          'module' : r.module,
-            'path' : r.pathname,
-            'file' : r.filename,
-            'line' : r.lineno,
+        r = {                                       #  log.info('test')
+            'time' : r.created + r.relativeCreated, #  date().timestamp
+            'type' : r.levelname.lower(),           # 'info'
+         'message' : r.getMessage(),                # 'test'
+        'function' : r.funcName,                    # '<module>'
+          'module' : r.module,                      # 'grasp'
+            'path' : r.pathname,                    # 'grasp.py'
+            'file' : r.filename,                    # 'grasp.py'
+            'line' : r.lineno,                      #  1234
         }
         if self.file:
             self.file.write(
@@ -488,7 +489,7 @@ def choices(a, weights=[], k=1):
 # print(choices(['a', 'b'], weights=[0.75, 0.25], k=10))
 
 #---- FILE ----------------------------------------------------------------------------------------
-# Temporary files are useful when a function takes a filename, but we have the data in the file.
+# Temporary files are useful when a function takes a filename, but we have the file's data instead.
 
 class tmp(object):
     
@@ -662,7 +663,7 @@ def cd(*args):
 # SQLite is a lightweight engine for a portable database stored as a single file.
 
 # https://www.sqlite.org/datatype3.html
-AFFINITY = collections.defaultdict(
+affinity = collections.defaultdict(
     lambda : 'text'    , {
        str : 'text'    ,
    unicode : 'text'    ,
@@ -674,20 +675,22 @@ AFFINITY = collections.defaultdict(
 
 def schema(table, *fields, **type):
     """ Returns an SQL CREATE TABLE statement, 
-        with indices on fields ending with '*'.
+        with indices on '#'-prefixed fields.
+        A field 'id' is automatically added.
     """
     s = 'create table if not exists `%s` (' % table + 'id integer primary key);'
     i = 'create index if not exists `%s_%s` on `%s` (`%s`);'
     for k in fields:
-        k = re.sub(r'\*$', '', k)  # 'name*' => 'name'
-        v = AFFINITY[type.get(k)]  #     str => 'text'
+        k = re.sub(r'^\#', '', k)  # '#name' => 'name'
+        v = affinity[type.get(k)]  #     str => 'text'
         s = s[:-2] + ', `%s` %s);' % (k, v)
     for k in fields:
-        if k.endswith('*'):
-            s += i % ((table, k[:-1]) * 2)
+        if k.startswith('#'):
+            s += '\n'
+            s += i % ((table, k[1:]) * 2)
     return s
 
-# print(schema('persons', 'name*', 'age', age=int))
+# print(schema('persons', '#name', 'age', age=int))
 
 class DatabaseError(Exception):
     pass
@@ -700,23 +703,21 @@ class Database(object):
         self.connection = sqlite.connect(name, timeout)
         self.connection.row_factory = factory
         if schema:
-            for q in schema.split(';'):
-                self(q, commit=False)
+            for q in schema.split('\n'):
+                self(q)
             self.commit()
 
-    def __call__(self, sql, values=(), first=False, commit=True):
+    def __call__(self, sql, values=(), commit=False):
         """ Executes the given SQL statement.
         """
         try:
             r = self.connection.cursor().execute(sql, values)
             if commit:
                 self.connection.commit()
-            if first:
-                return r.fetchone() if r else r  # single row
-            else:
-                return r
         except Exception as e:
             raise DatabaseError(str(e))
+        else:
+            return r
 
     def execute(self, *args, **kwargs):
         return self(*args, **kwargs)
@@ -727,27 +728,27 @@ class Database(object):
     def rollback(self):
         return self.connection.rollback()
 
+    def save(self):
+        return self('vacuum') # reduce file size
+
     @property
     def id(self):
         return self('select last_insert_rowid()').fetchone()[0]
 
     def find(self, table, *fields, **filters):
-        return self(*SELECT(table, *fields, **filters))
-
-    def first(self, table, *fields, **filters):
-        return self(*SELECT(table, *fields, **filters), first=True)
+        return self(*SQL_SELECT(table, *fields, **filters))
 
     def append(self, table, **fields):
-        return self(*INSERT(table, **fields), 
-                        commit=fields.pop('commit', True))
+        return self(*SQL_INSERT(table, **fields), 
+            commit=fields.pop('commit', True)).lastrowid # id
 
     def update(self, table, id, **fields):
-        return self(*UPDATE(table, id, **fields), 
-                        commit=fields.pop('commit', True))
+        return self(*SQL_UPDATE(table, id, **fields), 
+            commit=fields.pop('commit', True)).rowcount  # int
 
-    def remove(self, table, id):
-        return self(*DELETE(table, id), 
-                        commit=fields.pop('commit', True))
+    def remove(self, table, id, **fields):
+        return self(*SQL_DELETE(table, id),
+            commit=fields.pop('commit', True)).rowcount  # int
 
     def __del__(self):
         try: 
@@ -757,7 +758,7 @@ class Database(object):
         except:
             pass
 
-# db = Database(cd('test.db'), schema('persons', 'name*', 'age', age=int))
+# db = Database(cd('test.db'), schema('persons', '#name', 'age', age=int))
 # db.append('persons', name='Tom', age=30)
 # db.append('persons', name='Guy', age=30)
 # 
@@ -768,42 +769,45 @@ def concat(a, format='%s', separator=', '):
   # concat([1, 2, 3]) => '1, 2, 3'
     return separator.join(format % v for v in a)
 
-def SELECT(table, *fields, **where):
+def op(v):
+  # op([1, 2, 3]) => 'in (?, ?, ?)', (1, 2, 3)
+    if isinstance(v, (int, float)):                 #  1
+        return '= ?', (v,)
+    if isinstance(v, (set, list)):                  # [1, 2, 3]
+        return 'in (%s)' % concat('?' * len(v)), v
+    if isinstance(v, (tuple,)):                     # (1, 2)
+        return 'between ? and ?', v[:2]
+    if v[:2] in ('<=', '>=', '<>', '!='):           # '<>1'
+        return '%s ?' % v[:2], (v[2:],)
+    if v[:1] in ('<' , '>' ):                       # '<1'
+        return '%s ?' % v[:1], (v[1:],)
+    if '*' in v:                                    # '*ly'
+        return 'like ?', (v.replace('*', '%'),)
+    else:
+        return '= ?', (v,)
+
+def SQL_SELECT(table, *fields, **where):
     """ Returns an SQL SELECT statement + parameters.
     """
-
-    def op(v):
-        if isinstance(v, basestring) and re.search(r'^<=|>=', v): # '<=10'
-            return v[:2], v[2:]
-        if isinstance(v, basestring) and re.search(r'^<|>', v): # '<10'
-            return v[:1], v[1:]
-        if isinstance(v, basestring) and re.search(r'\*', v): # '*ly'
-            return 'like', v.replace('*', '%')
-        if hasattr(v, '__iter__'):
-            return 'in', v
-        else:
-            return '=', v
-
-    s = 'select %s from %s where %s ' + 'limit %i, %i order by `%s`;' % (
-         where.pop('slice', (0, -1)) + (
-         where.pop('sort', 'id'),)
-    )
-    f = concat(fields or '*')
-    k = where.keys()    # ['name', 'age']
-    v = where.values()  # ['Tom*', '>10']
-    v = map(op, v)      # [('like', 'Tom%'), ('>', '10')]
-    v = zip(*v)         #  ('like', '>'), ('Tom%', '10')
+    s = 'select %s '     % (concat(fields, '`%s`') or '*')
+    s+= 'from `%s` '     % table
+    s+= 'where %s '
+    s+= 'order by `%s` ' % where.pop('sort', 'id')
+    s+= 'limit %s, %s;'  % where.pop('slice', (0, -1))
+    k = where.keys()     # ['name', 'age']
+    v = where.values()   # ['Tom*', '>10']
+    v = map(op, v)       # [('like', 'Tom%'), ('>', '10')]
+    v = zip(*v)          #  ('like', '>'), ('Tom%', '10')
     v = iter(v)
-    q = next(v, ())
+    x = next(v, ())
     v = next(v, ())
-    s = s % (f, table, concat(zip(k, q), '`%s` %s ?', 'and'))
-    s = s.replace('limit 0, -1 ', '', 1)
-    s = s.replace('where  ', '', 1)
+    v = itertools.chain(*v)
+    s = s % (concat(zip(k, x), '`%s` %s', ' and') or 1)
     return s, tuple(v)
 
-# print(SELECT('persons', '*', age='>10', slice=(0, 10)))
+# print(SQL_SELECT('persons', '*', age='>10', sort='age', slice=(0, 10)))
 
-def INSERT(table, **fields):
+def SQL_INSERT(table, **fields):
     """ Returns an SQL INSERT statement + parameters.
     """
     s = 'insert into `%s` (%s) values (%s);'
@@ -812,27 +816,26 @@ def INSERT(table, **fields):
     s = s % (table, concat(k, '`%s`'), concat('?' * len(v)))
     return s, tuple(v)
 
-# print(INSERT('persons', name='Smith', age=10))
+# print(SQL_INSERT('persons', name='Tom', age=10))
 
-def UPDATE(table, id, **fields):
+def SQL_UPDATE(table, id, **fields):
     """ Returns an SQL UPDATE statement + parameters.
     """
     s = 'update `%s` set %s where id=?;'
     k = fields.keys()
     v = fields.values()
     s = s % (table, concat(k, '`%s`=?'))
-    s = s.replace(' set  ', '', 1)
     return s, tuple(v) + (id,)
 
-# print(UPDATE('persons', 1, name='Smith', age=20))
+# print(SQL_UPDATE('persons', 1, name='Tom', age=20))
 
-def DELETE(table, id):
+def SQL_DELETE(table, id):
     """ Returns an SQL DELETE statement + parameters.
     """
     s = 'delete from `%s` where id=?;' % table
     return s, (id,)
 
-# print(DELETE('persons' 1))
+# print(SQL_DELETE('persons', 1))
 
 #---- ENCRYPTION ----------------------------------------------------------------------------------
 # The pw() function is secure enough for storing passwords; encrypt() and decrypt() are not secure.
@@ -876,7 +879,7 @@ def decrypt(s, k=''):
 def pw(s, f='sha256', n=100000):
     """ Returns the encrypted string, using PBKDF2.
     """
-    k = base64.b64encode(os.urandom(32))
+    k = base64.b64encode(os.urandom(32)) # salt
     s = hashlib.pbkdf2_hmac(f, b(s)[:1024], k, n)
     s = binascii.hexlify(s)
     s = 'pbkdf2:%s:%s:%s:%s' % (f, n, u(k), u(s))
@@ -1688,7 +1691,7 @@ class DecisionTree(Model):
         """
         count = lambda data: collections.Counter(label for v, label in data)
 
-        def split(data, cost=gini, min=2, max=1e10, depth=100):
+        def split(data, cost=gini, min=2, max=10**10, depth=100):
             n = None
             for f in sliced(shuffled(features(v for v, label in data)), max):
                 Y = []
@@ -1840,6 +1843,14 @@ def confusion_matrix(model, test=[]):
         guess, p = top(model.predict(v))
         m[label][guess] += 1
     return m
+
+def errors(model, test=[]):
+    """ Returns an iterator of incorrect (vector, label, predicted).
+    """
+    for v, label in test:
+        guess, p = top(model.predict(v))
+        if guess != label:
+            yield v, label, guess
 
 def test(model, target, data=[]):
     """ Returns a (precision, recall)-tuple for the test data.
@@ -3912,7 +3923,7 @@ class Element(Node):
                 return False
         return True
 
-    def find(self, tag='*', attributes={}, depth=1e10):
+    def find(self, tag='*', attributes={}, depth=10*10):
         """ Returns an iterator of nested elements with the given tag and attributes.
         """
         if depth > 0:
@@ -4031,7 +4042,8 @@ def selector(element, s):
 
     for s in s.split(','):                                      # div, a
         e = [element]
-        for s in s.split(' '):
+        for s in re.split(r' (?![^\[]*\])', s):                 # div a[class="x y"]
+
             try:
                 combinator, tag, a, pseudo = \
                     SELECTOR.search(s).groups('')
@@ -4154,21 +4166,24 @@ def plaintext(element, keep={}, ignore={'head', 'script', 'style', 'form'}, form
         for n in n:
             if isinstance(n, Text):
                 # Collapse spaces, decode entities (&amp;)
-                s += re.sub(r'\s+', ' ', unescape(n.data))
+                ch = re.sub(r'\s+', ' ', unescape(n.data))
             if isinstance(n, Element):
-                if n in ignore:
+                if n not in ignore:
+                    ch = r(n)
+                else:
                     continue
                 if n.tag in BLOCK:
-                    s += '\n\n'
+                    ch = ch.strip()
                 if n.tag in keep:
-                    a  = ' '.join(['%s=%s' % (k, quote(n[k])) for k in keep[n.tag] if n[k] != None])
+                    a  = ' '.join('%s=%s' % (k, quote(n[k])) for k in keep[n.tag] if n[k] != None)
                     a  = ' ' + a if a else ''
-                    s += '<%s%s>%s</%s>' % (n.tag, a, r(n), n.tag)
+                    ch = '<%s%s>%s</%s>' % (n.tag, a, ch, n.tag)
                 else:
-                    s += format.get(n.tag, lambda s: s)(r(n))
+                    ch = format.get(n.tag, lambda s: s)(ch)
                 if n.tag in BLOCK:
-                    s += '\n\n'
-        return s.strip()
+                    ch = '\n\n%s\n\n' % ch
+            s += ch
+        return s
 
     s = r(element)
     s = re.sub(r'(\s) +'       , '\\1'  , s) # no left indent
