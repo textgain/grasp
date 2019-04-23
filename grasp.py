@@ -4402,15 +4402,19 @@ def date(*v, **format):
 ##### WWW #########################################################################################
 
 #---- APP -----------------------------------------------------------------------------------------
-
-# { 404: ('Not Found', 'Nothing matches the given URI')}
-STATUS = BaseHTTPServer.BaseHTTPRequestHandler.responses
-STATUS[429] = ('Too Many Requests', '')
+# The App class can be used to create a web service or GUI, served in a browser using HTML or JSON.
 
 SECOND, MINUTE, HOUR, DAY = 1, 1*60, 1*60*60, 1*60*60*24
 
-# A pool of recycled threads is more efficient than a
-# thread / request (see SocketServer.ThreadingMixIn).
+STATUS = BaseHTTPServer.BaseHTTPRequestHandler.responses
+STATUS = {int(k): v[0] for k, v in STATUS.items()}
+STATUS[429] = 'Too Many Requests'
+
+CORS = { # Cross-Origin Resource Sharing
+    'Access-Control-Allow-Origin' : '*',
+}
+
+# Recycle threads for handling concurrent requests:
 class ThreadPoolMixIn(SocketServer.ThreadingMixIn):
 
     def __init__(self, threads=10):
@@ -4435,17 +4439,15 @@ class Router(dict):
         return dict.__getitem__(self, path.strip('/'))
 
     def __call__(self, path, query):
-        """ Returns the value of the handler for the given path,
-            or the parent path if no handler is found.
+        """ Returns the handler's value for the given path,
+            or for the parent path if no handler is found.
         """
         path = path.strip('/')
         path = path.split('/')
         for i in reversed(range(len(path) + 1)):
-            try:
-                f = self['/'.join(path[:i])]
-            except:
-                continue
-            return f(*path[i:], **query)
+            f = self.get('/'.join(path[:i]))
+            if f:
+                return f(*path[i:], **query)
         raise RouteError
 
 class HTTPRequest(threading.local):
@@ -4469,46 +4471,50 @@ class HTTPError(Exception):
     def __init__(self, code=404):
         self.code = code
 
+def generic(code, traceback=''):
+    return '<h1>%s %s</h1><pre>%s</pre>' % (code, STATUS[code], traceback)
+
 WSGIServer = wsgiref.simple_server.WSGIServer
 
 class App(ThreadPoolMixIn, WSGIServer):
 
-    def __init__(self, host='127.0.0.1', port=8080, threads=10):
+    def __init__(self, host='127.0.0.1', port=8080, threads=10, log=sys.stderr):
         """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
         """
         WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
         ThreadPoolMixIn.__init__(self, threads)
         self.set_app(self.__call__)
-        self.rate     = {}
+        self.rate     = collections.defaultdict(lambda: (0, 0)) # (used, since)
         self.router   = Router()
         self.request  = HTTPRequest()
         self.response = HTTPResponse()
+        self.generic  = generic
 
     def route(self, path, rate=None, key=lambda request: request.ip):
         """ The @app.route(path) decorator defines the handler for the given path.
             The handler(*path, **query) returns a str or dict for the given path.
-            With rate=(n, t), the IP-address is granted n requests per t seconds,
+            With rate=(n, t), the IP address is granted n requests per t seconds,
             before raising a 429 Too Many Requests error.
         """
-        # http://127.0.0.1:8080/api/tag?q=Hello+world!&language=en
-        # app = App()
-        # @app.route('/api/tag')
-        # def api_tag(q='', language='en', rate=(100, HOUR)):
-        #     return '%s' % tag(q)
         def decorator(f):
             def wrapper(*args, **kwargs):
                 if rate:
-                    t = time.time()                    # now
-                    i, d = self.rate.get(key, (0, t))  # used, since
-                    if rate[1] < t - d:                # now - since > interval?
-                        n = 0
-                    if rate[0] < i + 1:                # used > limit?
+                    try:
+                        n, t = self.rate[key]      # used, since
+                    except KeyError:
+                        raise HTTPError(403)
+                    if rate[1] <= time.time() - t: # now - since > interval?
+                        n, t = 0, time.time()      # used = 0
+                    if rate[0] <= n:               # used > limit?
                         raise HTTPError(429)
-                    self.rate[key] = (i + 1, t)
+                    self.rate[key] = n + 1, t      # used + 1
                 return f(*args, **kwargs)
             self.router[path] = wrapper
             return wrapper
         return decorator
+
+    def error(self, f):
+        self.generic = f
 
     def run(self, debug=True):
         """ Starts the server.
@@ -4523,7 +4529,7 @@ class App(ThreadPoolMixIn, WSGIServer):
         # 'HTTP_USER_AGENT' => 'User-Agent'
         def headers(env):
             for k, v in env.items():
-                if k.startswith('HTTP_'):
+                if k[:5] == 'HTTP_':
                     k = k[5:]
                     k = k.replace('_', '-')
                     k = k.title()
@@ -4543,6 +4549,7 @@ class App(ThreadPoolMixIn, WSGIServer):
 
         # Set App.request (thread-safe).
         r = self.request
+        r.__dict__.clear()
         r.__dict__.update({
             'app'     : self,
             'ip'      : env['REMOTE_ADDR'],
@@ -4554,33 +4561,25 @@ class App(ThreadPoolMixIn, WSGIServer):
 
         # Set App.response (thread-safe).
         r = self.response
+        r.__dict__.clear()
         r.__dict__.update({
-            'code'    : 200,
-            'headers' : {
-                'content-type': 'text/html; charset=utf-8', 
-                'access-control-allow-origin': '*' # CORS
-            }
+            'headers' : dict({'Content-Type': 'text/html; charset=utf-8'}, **CORS),
+            'code'    : 200
         })
 
         try:
-            v = self.router(
-                self.request.path, 
-                self.request.query
-            )
+            v = self.router(self.request.path, self.request.query)
         except Exception as e:
-            if   isinstance(e, HTTPError):
+            if isinstance(e, HTTPError):
                 r.code = e.code
             elif isinstance(e, RouteError):
                 r.code = 404
             else:
                 r.code = 500
-            # Error page (with traceback if debug=True):
-            v  = '<h1>%s</h1><p>%s</p>' % STATUS[r.code]
-            v += '<pre>%s</pre>' % traceback.format_exc() \
-                    if self.debug else ''
+            v = self.generic(r.code, traceback.format_exc() if self.debug else '')
 
-        if isinstance(v, dict): # dict => JSON-string
-            r.headers['content-type'] = 'application/json'
+        if isinstance(v, (dict, list)):
+            r.headers['Content-Type'] = 'application/json; charset=utf-8'
             v = json.dumps(v)
         if hasattr(v, '__str__'):
             v = v.__str__()
@@ -4591,6 +4590,10 @@ class App(ThreadPoolMixIn, WSGIServer):
         start_response('%s %s' % (r.code, STATUS[r.code]), list(r.headers.items()))
         return [b(v)]
 
+    def handle_error(self, *args):
+        # SocketServer errors
+        traceback.print_exc()
+
 try:
     app = application = App(threads=10)
 except socket.error:
@@ -4600,12 +4603,19 @@ except socket.error:
 # @app.route('/')
 # def index(*path, **query):
 #     #raise HTTPError(500)
+#     #db = Database('data.db') # fast & safe for reading
 #     return 'Hello world! %s %s' % (repr(path), repr(query))
 
 # http://127.0.0.1:8080/api/tag?q=Hello+world!&language=en
 # @app.route('/api/tag', rate=(10, MINUTE))
 # def api_tag(q='', language='en'):
 #     return tag(q, language)
+
+# @app.error
+# def error(code, traceback=''):
+#     return 'Oops!'
+
+# sys.stderr = os.devnull # (silent)
 
 # app.run()
 
