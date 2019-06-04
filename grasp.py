@@ -586,8 +586,11 @@ class CSV(table):
         f = open(path, 'rb')
         f = (s.replace(b'\r\n', b'\n') for s in f)
         f = (s.replace(b'\r'  , b'\n') for s in f)
-        s = next(f, b'').lstrip(b'\xff\xfe') # BOM
+        s = next(f, b'')
+        s = s.lstrip(b'\xef\xbb\xbf') # BOM
+        s = s.lstrip(b'\xff\xfe')
         f = itertools.chain((s,), f)
+        #print '!!', s
         e = lambda s: u(s, encoding)
 
         if PY3:
@@ -2172,6 +2175,41 @@ def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
 
 ##### NLP #########################################################################################
 
+#---- TEXT SEARCH ---------------------------------------------------------------------------------
+# The trie() function maps a dict or strings (i.e., a lexicon) to a tree of chars, for fast search.
+
+class trie(dict):
+
+    def __init__(self, lexicon={}):
+        """ Returns a trie for the dict of str keys.
+        """
+        for k, v in lexicon.items():
+            n = self
+            for k in k:
+                n = n.setdefault(k, {}) # {'w': {'o': {'w': {None: +0.5}}}}
+            n[None] = v
+
+    def search(self, s, sep=lambda ch: ch.isalpha() is False):
+        """ Returns an iterator of (i, j, k, v)-tuples, 
+            for keys bounded by the separator (or None).
+        """
+        n = len(s)
+        i = 0
+        while i < n:
+            b = self # branch
+            j = i
+            while j < n and s[j] in b:
+                b = b[s[j]]
+                j += 1
+                if None in b and (
+                  sep is None or \
+                  sep(s[i-1:i]) and \
+                  sep(s[j:j+1])):
+                    yield i, j, s[i:j], b[None]
+            i += 1
+
+# print(list(trie({'wow': +0.5, 'wtf': -0.5}).search('oh wow!')))
+
 #---- TEXT ----------------------------------------------------------------------------------------
 
 diacritics = u"àáâãäåǟāąæçćčςďḑèéêëēěęģìíîïīįłķќĺļľņńñňѝйòóőôõȭöȯȱōðøœþŕřŗśšťțùúűûüůūųẁẃẅŵỳýÿŷўźžż"
@@ -2238,7 +2276,7 @@ def anon(s):
 
 # print(anon('@Textgain (https://www.textgain.com)'))
 
-def sep(s, punctuation=',;:.!?()"\''):
+def sep(s):
     """ Returns the string with separated punctuation marks.
     """
     s = s.replace( ',',  ' , ')
@@ -2250,15 +2288,18 @@ def sep(s, punctuation=',;:.!?()"\''):
     s = s.replace( '(',  ' ( ')
     s = s.replace( ')',  ' ) ')
     s = s.replace( '"',  ' " ')
-    s = s.replace( "'",  " ' ")
-    s = s.replace(u"‘", u" ‘ ")
-    s = s.replace(u"’", u" ’ ")
     s = s.replace(u"“", u" “ ")
     s = s.replace(u"”", u" ” ")
+    s = s.replace(u"‘", u" ‘ ")
+    s = s.replace(u"’", u" ’ ")
+    s = s.replace( "' ", " ' ")
+    s = s.replace( " '", " ' ")
+    s = s.replace("'s "," 's ")
     s = s.replace(';  )', ';)')
     s = s.replace(':  )', ':)')
     s = s.replace(':  (', ':(')
-    s = ' '.join(s.split())
+    s = s.split()
+    s = ' '.join(s)
     return s
 
 # print(sep('"Wow!" :)'))
@@ -2478,8 +2519,8 @@ breaks = {
 # Sentence breaks in quotes are ignored if not followed by a capital letter.
 # Sentence breaks can be followed by trailing quotes, hashtags or emoticons.
 
-def tokenize(s, language='en', known=[]): # ~ 125K tokens/sec
-    """ Returns the string with punctuation marks split from words , 
+def tokenize(s, language='en', known=[], separator=' '): # ~125K tokens/sec
+    """ Returns the string with punctuation marks split from words ,
         and sentences separated by newlines.
     """
     f = ['' for ch in s] # token flags
@@ -2504,12 +2545,12 @@ def tokenize(s, language='en', known=[]): # ~ 125K tokens/sec
     # Split tokens:
     for ch, f in zip(s, f):
         if '^' in f:
-            ch = ' %s' % ch
+            ch  = separator + ch
         if '$' in f:
-            ch = '%s ' % ch
+            ch += separator
         a.append(ch)
     s = ''.join(a)
-    s = re.sub(r' +', ' ', s)
+    s = re.sub('%s+' % separator, separator, s)
     # Split breaks:
     for a, b in breaks.get('*') + breaks.get(language, []):
         s = re.sub(a, b, s)
@@ -2522,6 +2563,25 @@ tok = tokenize
 # s = u"Title\nA sentence.Another sentence. ‘A citation.’ By T. De Smedt."
 # 
 # print(tok(s))
+
+def scan(s, language='en', known=[]):
+    """ Returns a list of token breakpoints,
+        which can be used for de-tokenizing.
+    """
+    b = u'␣'
+    s = s.replace(b, '_')
+    s = re.sub(r'(^\s)', '_', s)
+    s = tokenize(s, language, known, b)
+    s = re.sub(' %s' % b, ' ', s)
+    s = re.sub('%s ' % b, ' ', s)
+    s = s.strip(b)
+    a = []
+    for i, ch in enumerate(s):
+        if ch == b:
+            a.append(i - len(a))
+    return a
+
+# print(scan(u'Here, kitty kitty!'))
 
 def wc(s):
     """ Returns a (word, count)-dict, lowercase.
@@ -2766,9 +2826,9 @@ class Phrase(Tagged):
 _RE_TAG = '|'.join(map(re.escape, TAG)) # NAME|NOUN|\:\)|...
 
 def chunk(pattern, text, replace=[]):
-    """ Yields an iterator of matching Phrase objects found in the tagged text.
-        The search pattern is a sequence of tokens (talk-, -ing), tags (VERB), 
-        token/tags (-ing/VERB), escaped characters (:\)) or control characters:
+    """ Returns an iterator of matching Phrase objects in the given tagged text.
+        The search pattern is a sequence of tokens (laugh-, -ing), tags (VERB), 
+        token/tags (-ing/VERB), escaped characters (:\)) or control characters: 
         - ^ $ begin/end
         - ( ) group
         -  |  options: NOUN|PRON CONJ|,
@@ -2847,7 +2907,7 @@ def chunk(pattern, text, replace=[]):
 #     print(u(g1), u(g2), u(g3))
 
 def constituents(text, language='en'):
-    """ Yields an iterator of (Phrase, tag)-tuples in the given tagged text,
+    """ Returns an iterator of (Phrase, tag)-tuples in the given tagged text,
         with tags NP (noun phrase), VP (verb phrase), AP (adjective phrase) 
         or PP (prepositional phrase).
     """
@@ -3559,7 +3619,7 @@ class Twitter(object):
             if len(r) > 0:
                 id = int(v['id_str']) - 1
             if len(r) < 100:
-                raise StopIteration
+                return
 
     def follow(self, q, language='', delay=5.5, cached=False, key=None):
         """ Returns an iterator of tweets for the given username.
@@ -3587,9 +3647,9 @@ class Twitter(object):
             try:
                 id = r['next_cursor']
             except:
-                raise StopIteration
+                return
             if id == 0:
-                raise StopIteration
+                return
 
     def likes(self, q, delay=60, cached=False, headers={'User-Agent': 'Grasp.py'}):
         """ Returns an iterator of usernames that liked the tweet with the given id.
@@ -4361,6 +4421,9 @@ class Date(datetime.datetime):
     def __str__(self):
         return self.strftime('%Y-%m-%d %H:%M:%S')
 
+    def __int__(self):
+        return self.timestamp
+
     def __add__(self, i):
         return date(datetime.datetime.__add__(self, datetime.timedelta(seconds=i)))
 
@@ -4396,13 +4459,10 @@ def date(*v, **format):
             pass
     raise DateError('unknown date format: %s' % repr(v))
 
-# print(date('Dec 31 1999', format='%b %d %Y'))
-# print(date(1999, 12, 31))
-
 ##### WWW #########################################################################################
 
 #---- APP -----------------------------------------------------------------------------------------
-# The App class can be used to create a web service or GUI, served in a browser using HTML or JSON.
+# The App class can be used to create a web service or GUI, served in a browser using JSON or HTML.
 
 SECOND, MINUTE, HOUR, DAY = 1, 1*60, 1*60*60, 1*60*60*24
 
@@ -4552,11 +4612,12 @@ class App(ThreadPoolMixIn, WSGIServer):
         r.__dict__.clear()
         r.__dict__.update({
             'app'     : self,
+            'env'     : env,
             'ip'      : env['REMOTE_ADDR'],
             'method'  : env['REQUEST_METHOD'],
             'path'    : env['PATH_INFO'],
             'query'   : dict(query(env)),
-            'headers' : dict(headers(env)),
+            'headers' : dict(headers(env))
         })
 
         # Set App.response (thread-safe).
@@ -4683,7 +4744,7 @@ def shortest_paths(g, n1, n2=None):
                 yield p
             if n2 != None and n2 == n:
                 yield p
-                raise StopIteration
+                return
             for n, w in g.get(n, {}).items(): # {n1: {n2: cost}}
                 if n not in v:
                     heapq.heappush(q, (d + w, n, p))
