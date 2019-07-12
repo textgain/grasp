@@ -90,3 +90,9 @@ ENV/
 
 # pycharm IDE
 .idea/
+
+.DS_Store
+*.pyc
+cache/
+dev/
+WordNet-3.0/
