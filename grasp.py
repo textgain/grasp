@@ -77,9 +77,11 @@ import csv as csvlib
 import json
 import zipfile
 import tempfile
+import mimetypes
 import glob
 import time
 import datetime
+import calendar
 import random
 import math
 import heapq
@@ -590,7 +592,6 @@ class CSV(table):
         s = s.lstrip(b'\xef\xbb\xbf') # BOM
         s = s.lstrip(b'\xff\xfe')
         f = itertools.chain((s,), f)
-        #print '!!', s
         e = lambda s: u(s, encoding)
 
         if PY3:
@@ -647,7 +648,7 @@ def cd(*args):
     """
     f = inspect.currentframe()
     f = inspect.getouterframes(f)[1][1] 
-    f = f != '<stdin>' and f or os.getcwd()
+    f = os.getcwd() if f == '<stdin>' else f
     p = os.path.realpath(f)
     p = os.path.dirname(p)
     p = os.path.join(p, *args)
@@ -2447,7 +2448,7 @@ tokens = {
         r'\d+€|[$€£¥]\d+'                                            , # 100€
         r'(?<=\d)(kb|mb|gb|kg|mm|cm|km|m|ft|h|hrs|am|pm)(?=\W|$)'    , # 10 mb
         r'(?<!\w)(a\.m|ca|cfr?|etc|e\.?g|i\.?e|p\.m|P\.?S|vs|v)\.'   , # etc.
-        r'(?<!\w)(Dr|dr|Mr|mr|nr|no|Prof|prof)\.'                    , # Dr.
+        r'(?<!\w)(Dr|dr|Mr|mr|Mrs|Ms|nr|no|Prof|prof)\.'             , # Dr.
         r'(^|\s)\d\d?\. '                                            , # 1.
         r'\.+'                                                       , #  ...
         r'[\[\(]\.+[\)\]]'                                           , # (...)
@@ -2465,6 +2466,7 @@ tokens = {
         r'(?<!\w)(Abs|bspw|bzw|e\.V|d\.h|etw|evtl|ggf|inkl|m\.E)\.'  , # evtl.
         r'(?<!\w)(Mio|Nr|sog|u\.a|usw|v\.a|vgl|z\.B|z\.T)\.'        ], # z.B.
     'en': [
+        r'(?i)(?<!\w)(Col|Gen|Rep|Rev|Sen)\.'                        , # Col.
         r'(?i)(?<=\w)\'(cause|d|ll|m|re|s|ve)'                       , # it's
         r'(?i)(?<=\w)n\'t'                                           , # isn't
         r'(?i)(?<=\w\.)\'s'                                          , # U.K.'s
@@ -2650,9 +2652,9 @@ class Tagged(list):
         """ Returns the tagged string as a list of (token, tag)-tuples.
         """
         if isinstance(s, list):
-            list.__init__(self, s)
+            list.__init__(self, ((u(w), tag) for w, tag in s))
         if isinstance(s, (str, unicode)) and s:
-            for w in s.split(' '):
+            for w in s.split():
                 w = u(w)
                 w = w.rsplit('/', 1)
                 w = tuple(w)
@@ -2674,12 +2676,17 @@ TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json'), 'rb'))
 
 lexicon = { # top 10
     'en': {
+        '.'    : 'PUNC',
+        ','    : 'PUNC',
         'a'    : 'DET' ,
+        'an'   : 'DET' ,
         'the'  : 'DET' ,
         'I'    : 'PRON',
         'it'   : 'PRON',
-        'be'   : 'VERB', 'are': 'VERB', 'am': 'VERB', 'is': 'VERB',
-        'have' : 'VERB', 'has': 'VERB', 
+        'is'   : 'VERB',
+        'be'   : 'VERB',
+        'have' : 'VERB', 
+        'has'  : 'VERB',
         'in'   : 'PREP',
         'to'   : 'PREP',
         'of'   : 'PREP',
@@ -2687,7 +2694,7 @@ lexicon = { # top 10
     }
 }
 
-def tag(s, language='en'):
+def tag(s, language='en'): # ~5K tokens/sec
     """ Returns the tagged string as a list of (token, tag)-tuples.
     """
     m = TAGGER[language]
@@ -2720,7 +2727,7 @@ def parse(s, language='en', tokenize=tokenize):
 # for s in parse("We're all mad here. I'm mad. You're mad."):
 #     print(repr(s))
 
-PTB = {           # Penn Treebank tagset                                      # EN
+PTB = {       # Penn Treebank tagset                                          # EN
     u'NOUN' : {'NN', 'NNS', 'NNP', 'NNPS', 'NP'},                             # 30%
     u'VERB' : {'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'MD'},                # 14%
     u'PUNC' : {'LS', 'SYM', '.', ',', ':', '(', ')', '``', "''", '$', '#'},   # 11%
@@ -2783,7 +2790,7 @@ def universal(w, tag, tagset=WEB):
 # 
 # print(tag('What a great day! I love it.'))
 
-#---- PART-OF-SPEECH SEARCH -----------------------------------------------------------------------
+#---- PART-OF-SPEECH CHUNKER ----------------------------------------------------------------------
 # The chunk() function yields parts of a part-of-speech-tagged sentence that match a given pattern.
 # For example, 'ADJ* NOUN' yields all nouns in a sentence, and optionally the preceding adjectives.
 
@@ -2956,21 +2963,37 @@ def head(phrase, tag='NP', language='en'):
 # print(head(Phrase('cat/NOUN fight/NOUN')))
 # print(head(Phrase('combat/NOUN de/PREP chats/NOUN'), language='fr'))
 
+#---- KEYWORD EXTRACTION --------------------------------------------------------------------------
+# Keyword extraction aims to determine the topic of a text.
+
+df = LazyDict()
+
+for f in glob.glob(cd('*-doc.json')):
+    df[f.split('-')[-2][-2:]] = lambda: json.load(open(f, 'rb'))
+
+def keywords(s, n=10, language='en'):
+    """ Returns a list of n keywords.
+    """
+    s = tok(s, language)                            # "Boo Boo needs chow"
+    s = tag(s, language)                            # "Boo/NAME Boo/NAME needs/VERB chow/NOUN"
+    s = chunk('NAME+', s), \
+        chunk('NOUN+', s)
+    s = itertools.chain(*s)                         # ['Boo/NAME Boo/NAME', 'chow/NOUN']
+    s = [(w for w, pos in p) for p in s]            # [['Boo', 'Boo'], ['chow']]
+    s = [' '.join(p).lower() for p in s]            # ['boo boo', 'chow']
+    f = zip(s, range(1, 1 + len(s)))                # [('boo boo', 1), ('chow', 2)]
+    f = dict({k: 1.0 / v for k, v in reversed(f)})  # {'boo boo': 1.0, 'chow': 0.5}
+    f = collections.Counter(s, **f)                 # {'boo boo': 2.0, 'chow': 1.5} (tf)
+    f = f.most_common(n)
+    return [k for k, v in f]
+
+kw = keywords
+
+# print(kw('Boo Boo needs chow.'))
+
 #---- SENTIMENT ANALYSIS --------------------------------------------------------------------------
 # Sentiment analysis aims to determine the affective state of (subjective) text,
 # for example whether a customer review is positive or negative about a product.
-
-polarity = {
-    'en': {
-       u'😃'    : +1.0,
-        'great' : +1.0,
-        'good'  : +0.5,
-        'nice'  : +0.5,
-        'bad'   : -0.5,
-        'awful' : -1.0,
-       u'😠'    : -1.0,
-    }
-}
 
 negation = {
     'en': {'no', 'not', "n't"},
@@ -2980,8 +3003,19 @@ intensifiers = {
     'en': {'really', 'very'},
 }
 
+polarity = {
+    'en': {
+        'awesome' : +1.0,
+        'good'    : +0.5,
+        'bad'     : -0.5,
+        'awful'   : -1.0,
+    }
+}
+
+polarity = LazyDict()
+
 for f in glob.glob(cd('*-pol.json')):
-    polarity[f.split('-')[-2][-2:]] = json.load(open(f, 'rb'))
+    polarity[f.split('-')[-2][-2:]] = lambda: json.load(open(f, 'rb'))
 
 def sentiment(s, language='en'):
     """ Returns the polarity of the string as a float,
@@ -4400,6 +4434,7 @@ class Date(datetime.datetime):
     # Date.year
     # Date.month
     # Date.day
+    # Date.hour
     # Date.minute
     # Date.second
 
@@ -4413,7 +4448,7 @@ class Date(datetime.datetime):
 
     @property
     def timestamp(self):
-        return int(time.mktime(self.timetuple()))
+        return calendar.timegm(self.timetuple())
 
     def format(self, s):
         return u(self.strftime(s))
@@ -4431,7 +4466,7 @@ class Date(datetime.datetime):
         return date(datetime.datetime.__sub__(self, datetime.timedelta(seconds=i)))
 
     def __repr__(self):
-        return "Date(%s)" % repr(str(self))
+        return "Date(%s)" % repr(self.__str__())
 
 def date(*v, **format):
     """ Returns a Date from the given timestamp or date string.
@@ -4447,7 +4482,7 @@ def date(*v, **format):
     if isinstance(v, (int, float)):
         return Date.fromtimestamp(v)
     if isinstance(v, datetime.datetime):
-        return Date.fromtimestamp(time.mktime(v.timetuple()))
+        return Date.fromtimestamp(calendar.timegm(v.timetuple()))
     try:
         return Date.fromtimestamp(rfc_2822(v)) 
     except: 
@@ -4488,6 +4523,9 @@ class RouteError(Exception):
 
 class Router(dict):
 
+    def __init__(self, static=None):
+        self.static = static
+
     def __setitem__(self, path, f):
         """ Defines the handler function for the given path.
         """
@@ -4504,10 +4542,22 @@ class Router(dict):
         """
         path = path.strip('/')
         path = path.split('/')
+
+        # static:
+        if self.static:
+            b = os.path.join(self.static, '') # add /
+            f = os.path.join(self.static, *path)
+            b = os.path.realpath(b)
+            f = os.path.realpath(f)
+            if f.startswith(b) and os.path.isfile(f):
+                return open(f, 'rb')
+
+        # dynamic:
         for i in reversed(range(len(path) + 1)):
             f = self.get('/'.join(path[:i]))
             if f:
                 return f(*path[i:], **query)
+
         raise RouteError
 
 class HTTPRequest(threading.local):
@@ -4538,14 +4588,14 @@ WSGIServer = wsgiref.simple_server.WSGIServer
 
 class App(ThreadPoolMixIn, WSGIServer):
 
-    def __init__(self, host='127.0.0.1', port=8080, threads=10, log=sys.stderr):
+    def __init__(self, host='127.0.0.1', port=8080, root=None, threads=10, log=sys.stderr):
         """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
         """
         WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
         ThreadPoolMixIn.__init__(self, threads)
         self.set_app(self.__call__)
         self.rate     = collections.defaultdict(lambda: (0, 0)) # (used, since)
-        self.router   = Router()
+        self.router   = Router(static=root)
         self.request  = HTTPRequest()
         self.response = HTTPResponse()
         self.generic  = generic
@@ -4642,8 +4692,10 @@ class App(ThreadPoolMixIn, WSGIServer):
         if isinstance(v, (dict, list)):
             r.headers['Content-Type'] = 'application/json; charset=utf-8'
             v = json.dumps(v)
-        if hasattr(v, '__str__'):
-            v = v.__str__()
+        if hasattr(v, 'name') and \
+           hasattr(v, 'read'):
+            r.headers['Content-Type'] = mimetypes.guess_type(v.name)[0] or ''
+            v = v.read()
         if v is None:
             v = ''
 
@@ -4655,10 +4707,7 @@ class App(ThreadPoolMixIn, WSGIServer):
         # SocketServer errors
         traceback.print_exc()
 
-try:
-    app = application = App(threads=10)
-except socket.error:
-    pass # 'Address already in use'
+# app = application = App(threads=10)
 
 # http://127.0.0.1:8080/products?page=1
 # @app.route('/')
@@ -5195,14 +5244,3 @@ def visualize(g, **kwargs):
     k.update(kwargs)
     k = {k: json.dumps(v) for k, v in k.items()}
     return s % k
-
-# g = Graph()
-# n = range(200)
-# for _ in range(200):
-#     g.add(
-#         n1=random.choice(n), 
-#         n2=random.choice(n))
-# 
-# f = open('test.html', 'w')
-# f.write(visualize(g, n=1000, directed=True))
-# f.close()
