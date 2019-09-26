@@ -94,10 +94,8 @@ if PY3:
     str, unicode, basestring = bytes, str, str
 
 if PY3:
-    # Python 3.4+
     import collections.abc
 else:
-    # Python 2.7
     collections.abc = collections
 
 if PY3:
@@ -120,28 +118,17 @@ else:
     import cookielib
 
 if PY3:
-    import urllib
-    import urllib.request as urllib2
-    import urllib.parse as urlparse
-    URLError, Request, urlopen, urlencode, urldecode, urlquote = (
-        urllib.error.URLError,
-        urllib2.Request,
-        urllib2.urlopen,
-        urllib.parse.urlencode,
-        urllib.parse.unquote,
-        urllib.parse.quote
-    )
+    import urllib.request
+    import urllib.parse
 else:
     import urllib2
     import urlparse
-    URLError, Request, urlopen, urlencode, urldecode, urlquote = (
-        urllib2.URLError,
-        urllib2.Request,
-        urllib2.urlopen,
-        urllib.urlencode,
-        urllib.unquote,
-        urllib.quote
-    )
+    urllib.error           = urllib2
+    urllib.request         = urllib2
+    urllib.parse           = urlparse
+    urllib.parse.urlencode = urllib.urlencode
+    urllib.parse.unquote   = urllib.unquote
+    urllib.parse.quote     = urllib.quote
 
 # In Python 2, Class.__str__ returns a byte string.
 # In Python 3, Class.__str__ returns a Unicode string.
@@ -475,7 +462,7 @@ def nwise(a, n=2):
 #     print(v)
 
 def choices(a, weights=[], k=1):
-    """ Returns a random element from the given list,
+    """ Returns random elements from the given list,
         with optional (non-negative) probabilities.
     """
     if weights:
@@ -942,14 +929,14 @@ def norm(v):
 def cos(v1, v2):
     """ Returns the angle of the given vectors (0.0-1.0).
     """
-    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1.0) # cosine distance
+    return 1 - dot(v1, v2) / (norm(v1) * norm(v2) or 1) # cosine distance
 
 def diff(v1, v2):
     """ Returns the difference of the given vectors.
     """
     v1 = set(filter(v1.get, v1)) # non-zero
     v2 = set(filter(v2.get, v2))
-    return 1 - len(v1 & v2) / float(len(v1 | v2) or 1)
+    return 1 - len(v1 & v2) / float(len(v1 | v2) or 1) # Jaccard distance
 
 def knn(v, vectors=[], k=3, distance=cos):
     """ Returns the k nearest neighbors from the given list of vectors.
@@ -1810,7 +1797,28 @@ class DecisionTreeEnsemble(Model):
 
 RandomForest = DecisionTreeEnsemble
 
-#---- ACCURACY ------------------------------------------------------------------------------------
+#---- RANDOM BASELINE -----------------------------------------------------------------------------
+# The Random Baseline model can be used to compare a real model's performance to.
+
+class Baseline(Model):
+
+    def __init__(self, examples=[], **kwargs):
+        """ Weighted random baseline algorithm.
+        """
+        self.labels = collections.Counter(label for v, label in examples)
+
+    def train(self, v, label):
+        self.labels[label] += 1
+
+    def predict(self, v):
+        p = dict.fromkeys(self.labels, 0.0)
+        k = self.labels.items() # (k1, w1), (k2, w2)
+        k = zip(*k)             # (k1, k2), (w1, w2)
+        k = choices(*k)[0]
+        p[k] = 1.0
+        return p
+
+#---- PERFORMANCE ---------------------------------------------------------------------------------
 # Predicted labels will often include false positives and false negatives.
 # A false positive is a real e-mail that is labeled as spam (for example).
 # A false negative is a real e-mail that ends up in the junk folder.
@@ -2105,8 +2113,8 @@ def cc(v, label, model):
         r[f] = p - model.predict(e)[label] # leave-one-out
         e[f] = w
 
-    # Most biased feature has weight 1.0:
-    n = max(map(abs, r.values())) or 1.0
+    # Most biased feature has weight 1:
+    n = max(map(abs, r.values())) or 1
     r = {f: w / n for f, w in r.items()}
     r = collections.Counter(r)
     return r
@@ -2177,7 +2185,7 @@ def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
 ##### NLP #########################################################################################
 
 #---- TEXT SEARCH ---------------------------------------------------------------------------------
-# The trie() function maps a dict or strings (i.e., a lexicon) to a tree of chars, for fast search.
+# The trie() function maps a dict of strings (i.e., a lexicon) to a tree of chars, for fast search.
 
 class trie(dict):
 
@@ -2218,26 +2226,25 @@ diacritics = u"àáâãäåǟāąæçćčςďḑèéêëēěęģìíîïīįłķ
 URL = re.compile(r'(https?://.*?|www\.*?\.[\w.]+|[\w-]+\.(?:com|net|org))(?=\)?[,;:!?.]*(?:\s|$))')
 REF = re.compile(r'[\w.-]*@[\w.-]+', flags=re.U)
 
-def similarity(s1, s2, n=5):
-    """ Returns the degree of syntacic similarity (0.0-1.0),
-        measured by number of overlapping n-grams.
+def similarity(s1, s2, f=ngrams, n=2):
+    """ Returns the degree of lexical similarity (0.0-1.0)
+        measured by overlapping word or character n-grams.
     """
-    g1 = collections.Counter(ngrams(s1, n))
-    g2 = collections.Counter(ngrams(s2, n))
-    g3 = collections.Counter()
-    for w in g1:
-        if w in g2:
-            i = min(g1[w], g2[w])
-            g1[w] -= i
-            g2[w] -= i
-            g3[w] += i
-    return sum(g3.values()) / float(sum(g3.values()) + sum(g2.values()) + sum(g1.values()) or 1)
+    v1 = collections.Counter(f(s1, n))
+    v2 = collections.Counter(f(s2, n))
+    v1 = set((k, i) for k in v1 for i in range(v1[k]))
+    v2 = set((k, i) for k in v2 for i in range(v2[k]))
+
+    return 2 * len(v1 & v2) / float(len(v1) + len(v2) or 1) # Sørensen–Dice coefficient
 
 sim = similarity
 
 # s1 = 'the black cat sat on the mat'
 # s2 = 'the white cat sat on the mat'
 # print(sim(s1, s2, n=3))
+
+# print(sim('wow', 'wowow', chngrams))
+# print(sim('lol', 'wowow', chngrams))
 
 def readability(s):
     """ Returns the readability of the given string (0.0-1.0).
@@ -3082,20 +3089,22 @@ cooc = cooccurrence
 
 # print(cooc('the cat sat on the mat', 1))['the']
 
-class Embedding(dict):
+class Embedding(collections.OrderedDict):
 
     def __init__(self, s, m=10000, n=100, reduce=lambda v, n: [v.most_common(n) for v in v], **kwargs):
         """ Returns a dict of (word, context)-items, where context is 
             a dict of preceding and successive words and their counts.
         """
+        collections.OrderedDict.__init__(self)
+
         if s:
-            a = cooc(s, **kwargs)
+            a = cooc(s, **kwargs) # {word1: {word2: count}}
             a = a.items()
             a = sorted(a, key=lambda wv: sum(wv[1].values()))
             a = reversed(a)
-            a = list(a)[:m]
+            a = list(a)[:m]       # most frequent words
             w, v = zip(*a)
-            v = reduce(v, n)
+            v = reduce(v, n)      # dimension reduction
             v = map(dict, v)
             a = zip(w, v)
             self.update(a)
@@ -3108,17 +3117,40 @@ class Embedding(dict):
         q = heapq.nlargest(n, q)
         return q
 
-    def save(self, f):
-        f.write(json.dumps(self))
+    def save(self, f, format='json'):
+
+        if format == 'json':
+            f.write(json.dumps(self))
+
+        if format == 'txt':
+            h = features(self.values())
+            h = sorted(h)
+            s = ''
+            for w, v in self.items():
+                s += '\n%s ' % w
+                s += ' '.join('%.5f' % v.get(i, 0) for i in h)
+            f.write(s.strip())
 
     @classmethod
-    def load(cls, f):
+    def load(cls, f, format='json'):
         e = cls('')
-        e.update(json.loads(f.read()))
+
+        if format == 'json':
+            e.update(json.loads(f.read()))
+
+        if format == 'txt':   # GloVe
+            for s in f:       # word1 0.0 0.0 0.0 ...
+                s = s.split() # word2 0.0 0.0 0.0 ...
+                w = s[0]
+                v = s[1:]
+                v = map(float, v)
+                v = {i: n for i, n in enumerate(v) if n}
+                e[w] = v
+
         return e
 
-# m = Embedding(open('wp.txt').read())
-# for d, w in m.similar('king', 10):
+# e = Embedding(open('wp.txt').read())
+# for d, w in e.similar('king', 10):
 #     print(d, w)
 
 # king = president, emperor, queen, leader, ...
@@ -3245,7 +3277,7 @@ def oauth(url, data={}, method='GET', key='', token='', secret=('','')):
         return int(time.time())
 
     def encode(s):
-        return urlquote(b(s), safe='~')
+        return urllib.parse.quote(b(s), safe='~')
 
     def hash(s, key):
         return hmac.new(b(s), b(key), hashlib.sha1).digest()
@@ -3287,12 +3319,12 @@ OAuth = collections.namedtuple('Oauth', ('key', 'token', 'secret'))
 def serialize(url='', data={}):
     """ Returns a URL with a query string of the given data.
     """
-    p = urlparse.urlsplit(url)
-    q = urlparse.parse_qsl(p.query)
+    p = urllib.parse.urlsplit(url)
+    q = urllib.parse.parse_qsl(p.query)
     q.extend((b(k), b(v)) for k, v in sorted(data.items()))
-    q = urlencode(q, doseq=True)
+    q = urllib.parse.urlencode(q, doseq=True)
     p = p.scheme, p.netloc, p.path, q, p.fragment
-    s = urlparse.urlunsplit(p)
+    s = urllib.parse.urlunsplit(p)
     s = s.lstrip('?')
     return s
 
@@ -3308,25 +3340,29 @@ class TooManyRequests (Exception): pass # 429
 class Timeout         (Exception): pass
 
 cookies = cookielib.CookieJar()
+context = None # ssl.SSLContext
 
 def request(url, data={}, headers={}, timeout=10):
-    """ Returns a file-like object to the given URL.
+    """ Returns a file-like object from the given URL.
     """
     if isinstance(data, dict):
         if headers.get('Content-Type') == 'application/json':
             data = json.dumps(data)
-        else:                            # application/x-www-form-urlencoded
-            data = urlencode(data)
+        else:
+            data = urllib.parse.urlencode(data)
 
-    if cookies is not None:
-        f = urllib2.HTTPCookieProcessor(cookies)
-        f = urllib2.build_opener(f)
-    else:
-        f = urllib2.build_opener()
+    f = []
+    if cookies:
+        f.append(urllib.request.HTTPCookieProcessor(cookies))
+    if context:
+        f.append(urllib.request.HTTPSHandler(context=context))
     try:
-        f = f.open(Request(url, data or None, headers), timeout=timeout)
+        q = urllib.request.Request(url, data or None, headers)
+        f = urllib.request.build_opener(*f)
+        f = f.open(q, timeout=timeout)
 
-    except URLError as e:
+    except urllib.error.URLError as e:
+      # print(e.read())
         status = getattr(e, 'code', None) # HTTPError
         if status == 401:
             raise Forbidden
@@ -3432,54 +3468,34 @@ def sniff(url, *args, **kwargs):
 #         os.remove(f)
 
 #---- SEARCH --------------------------------------------------------------------------------------
-# The Bing Search API grants 5,000 free requests per month.
 # The Google Search API grants 100 free requests per day.
+# The Faroo Search API grants 1M free requests per month.
+
+# For unlimited (=paid) Google Search, Translate, Vision,
+# you need to use your own API key with a payment method:
+# https://console.developers.google.com/apis/dashboard
 
 keys = {
-    'Bing'   : '4PYH6hSM/Asibu9Nn7MTE+lu/hViglqCl/rV20yBP5o',
-    'Google' : 'AIzaSyBYaRL9drwBEjG_ASQbtITbLFMCi90u1ec'
+    'Google' : 'AIzaSyCqy-sxq6gZGAKxsoSfDHvjHgaW-M__T94',
+    'Faroo'  : '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
 }
 
 Result = collections.namedtuple('Result', ('url', 'text'))
-
-def bing(q, page=1, language='en', delay=1, cached=False, key=None):
-    """ Returns an iterator of (url, description)-tuples from Bing.
-    """
-    if 0 < page <= 100:
-        r  = 'https://api.datamarket.azure.com/bing/search/Web'
-        r += '?Query=\'%s'
-        r += '+language:%s\''
-        r += '&$skip=%i'
-        r += '&$top=10'
-        r += '&$format=json'
-        r %= (
-            urlquote(b(q)),
-            urlquote(b(language)), 1 + 10 * (page - 1))
-        k = base64.b64encode(b(':%s' % (key or keys['Bing'])))
-        r = download(r, headers={'Authorization': b'Basic ' + k}, delay=delay, cached=cached)
-        r = json.loads(u(r))
-
-        for r in r['d']['results']:
-            yield Result(
-                r['Url'],
-                r['Description']
-            )
 
 def google(q, page=1, language='en', delay=1, cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples from Google.
     """
     if 0 < page <= 10:
-        r  = 'https://www.googleapis.com/customsearch/v1'
-        r += '?cx=000579440470800426354:_4qo2s0ijsi'
+        r  = 'https://www.googleapis.com/customsearch/v1' # https://console.developers.google.com
+        r += '?cx=000579440470800426354:6r3pb8h1s3m'      # https://cse.google.com
         r += '&key=%s' % (key or keys['Google'])
         r += '&q=%s'
         r += '&lr=lang_%s'
         r += '&start=%i'
         r += '&num=10'
-        r += '&alt=json'
         r %= (
-            urlquote(b(q)),
-            urlquote(b(language)), 1 + 10 * (page - 1))
+            urllib.parse.quote(b(q)),
+            urllib.parse.quote(b(language)), 1 + 10 * (page - 1))
         r = download(r, delay=delay, cached=cached)
         r = json.loads(u(r))
 
@@ -3489,7 +3505,29 @@ def google(q, page=1, language='en', delay=1, cached=False, key=None):
                 r['htmlSnippet']
             )
 
-def search(q, engine='bing', page=1, language='en', delay=1, cached=False, key=None):
+def faroo(q, page=1, language='en', delay=1, cached=False, key=None):
+    """ Returns an iterator of (url, description)-tuples from Faroo.
+    """
+    if 0 < page <= 10:
+        k = {
+            'x-rapidapi-host' : 'faroo-faroo-web-search.p.rapidapi.com',
+            'x-rapidapi-key'  : '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
+        }
+        r  = 'https://faroo-faroo-web-search.p.rapidapi.com/api' # https://rapidapi.com
+        r += '?q=%s'
+        r += '&start=%s'
+        r += '&length=10'
+        r %= (urllib.parse.quote(b(q)), 1 + 10 * (page - 1))
+        r = download(r, headers=k, delay=delay, cached=cached)
+        r = json.loads(u(r))
+
+        for r in r['results']:
+            yield Result(
+                r['url'],
+                r['kwic']
+            )
+
+def search(q, engine='google', page=1, language='en', delay=1, cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples.
     """
     f = globals().get(engine, lambda *args: None)
@@ -3509,10 +3547,10 @@ def translate(q, source='', target='en', delay=1, cached=False, key=None):
     """ Returns the translated string.
     """
     r  = 'https://www.googleapis.com/language/translate/v2?'
+    r += '&key=%s'    % (key or keys['Google'])
+    r += '&q=%s'      % urllib.parse.quote(b(q[:1000]))
     r +=('&source=%s' % source) if source else ''
     r += '&target=%s' % target
-    r += '&key=%s'    % (key or keys['Google'])
-    r += '&q=%s'      % urlquote(b(q[:1000]))
     r  = download(r, delay=delay, cached=cached)
     r  = json.loads(u(r))
     r  = r.get('data', {})
@@ -3583,32 +3621,36 @@ keys['Twitter'] = OAuth(
     'MrsrcmKkyzWOTjoKVsPLVvCYRtMcDYaIx0NKIb6yhRIhv'
 ))
 
-Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'photo', 'likes'))
+Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'likes'))
 
 class Twitter(object):
 
-    def parse(self, v):
-        def f(v):
-            v = decode(v.get('extended_tweet', {}) \
-                        .get('full_text',          # 240 characters (stream)
-                       v.get('full_text',          # 240 characters (search)
-                       v.get('text', ''))))        # 140 characters (< 2017)
-            return v
-
-        t = Tweet(
-            u(v.get('id_str', '')),
-            u(f(v)),
-            u(v.get('created_at', '')),
-            u(v.get('lang', '')).replace('und', ''),
-            u(v.get('user', {}).get('screen_name', '')),
-            u(v.get('user', {}).get('profile_image_url', '')),
-          int(v.get('favorite_count', 0))
+    def parse(self, r):
+        f = lambda r: decode(
+            r.get('extended_tweet', {}) \
+             .get('full_text',          # 240 characters (stream)
+            r.get('full_text',          # 240 characters (search)
+            r.get('text', '')))         # 140 characters (< 2017)
         )
-        RT =  v.get('retweeted_status')
-        if RT:
-            # Replace truncated retweet (...) with full text.
-            t = t._replace(text=u('RT @%s: %s' % (RT['user']['screen_name'], f(RT))))
-        return t
+        a = (
+            r.get('id_str', ''),
+            r.get('created_at', ''),
+            r.get('lang', '').replace('und', ''),
+            r.get('user', {}).get('screen_name', ''),
+            r.get('favorite_count', 0)
+        )
+        try:
+            r = r['retweeted_status']
+            s = 'RT @%s: %s' % (r['user']['screen_name'], f(r))
+        except:
+            s = f(r)
+        try:
+            r = r['entities']['media'][0]
+            s = s.replace(r['url'], r['media_url_https'])
+        except:
+            pass
+
+        return Tweet(a[0], s, *a[1:])
 
     def stream(self, q, language='', timeout=60, delay=1, key=None):
         """ Returns an iterator of tweets (live).
@@ -3736,7 +3778,8 @@ twitter = Twitter()
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
 
 BIBLIOGRAPHY = {
-    'div'                ,
+    'style'              ,
+    'div div'            , # figure
     'table'              , # infobox
     '#references'        , # references title
     '.reflist'           , # references
@@ -3756,7 +3799,7 @@ def wikipedia(q='', language='en', delay=1, cached=True):
     r += '?action=parse'
     r += '&format=json'
     r += '&redirects=1'
-    r += '&page=%s' % urlquote(q)
+    r += '&page=%s' % urllib.parse.quote(q)
     r  = download(r, delay=delay, cached=cached)
     r  = json.loads(u(r))
 
@@ -3876,7 +3919,6 @@ def mail(to, subject, message, relay=SMTP('', '', 'smtp.gmail.com:465')):
     s.close()
 
 # mail('grasp@mailinator.com', 'test', u'<b>Héllø</b>')
-
 
 ##### WWW #########################################################################################
 
@@ -4317,7 +4359,7 @@ def decode(s):
   # s = s.replace('&#10;'  , '\n')
   # s = s.replace('&#13;'  , '\r')
     s = re.sub(r'https?://.*?(?=\s|$)', \
-        lambda m: urldecode(m.group()), s) # '%3A' => ':' (in URL)
+        lambda m: urllib.parse.unquote(m.group()), s) # '%3A' => ':' (in URL)
     return s
 
 def docx(path):
@@ -4652,9 +4694,9 @@ class App(ThreadPoolMixIn, WSGIServer):
                 env['QUERY_STRING'],
                 env['wsgi.input'].read(int(env.get('CONTENT_LENGTH') or 0))
             )
-            for k, v in urlparse.parse_qs(GET , True).items():
+            for k, v in urllib.parse.parse_qs(GET , True).items():
                 yield u(k), u(v[-1])
-            for k, v in urlparse.parse_qs(POST, True).items():
+            for k, v in urllib.parse.parse_qs(POST, True).items():
                 yield u(k), u(v[-1])
 
         # Set App.request (thread-safe).
@@ -5244,3 +5286,16 @@ def visualize(g, **kwargs):
     k.update(kwargs)
     k = {k: json.dumps(v) for k, v in k.items()}
     return s % k
+
+###################################################################################################
+
+def setup(src='https://github.com/textgain/grasp/blob/master/'):
+    for f in (
+      'en-pos.json',
+      'en-pol.json',
+      'en-doc.json',
+      'loc.csv'):
+        if not os.path.existst(cd(f)):
+            s = os.path.join(src, f)
+            s = download(s)
+            open(cd(f), 'wb').write(s)
