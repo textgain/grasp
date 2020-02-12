@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '1.0'
+__version__   =  '2.0'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -193,7 +193,7 @@ def _worker(x):
 # Asynchronous functions are executed in a separate thread and notify a callback function 
 # (instead of blocking the main thread).
 
-def asynchronous(f, callback=lambda v, e: None, daemon=True):
+def asynchronous(f, callback=lambda v, e: None, blocking=False):
     """ Returns a new function that calls 
         callback(value, exception=None) when done.
     """
@@ -207,7 +207,7 @@ def asynchronous(f, callback=lambda v, e: None, daemon=True):
                 callback(v, None)
         t = threading.Thread
         t = t(target=worker, args=(callback, f) + args, kwargs=kwargs)
-        t.daemon = daemon # False = program only ends if thread stops.
+        t.daemon = not blocking
         t.start()
         return t
     return thread
@@ -228,6 +228,7 @@ def asynchronous(f, callback=lambda v, e: None, daemon=True):
 # Atomic operations are thread-safe, e.g., dict.get() or list.append(),
 # but not all operations are atomic, e.g., dict[k] += 1 needs a lock.
 
+Lock = threading.RLock
 lock = threading.RLock()
 
 def atomic(f):
@@ -246,7 +247,7 @@ def atomic(f):
 
 MINUTE, HOUR, DAY = 60, 60*60, 60*60*24
 
-def scheduled(interval=MINUTE):
+def scheduled(interval=MINUTE, blocking=False):
     """ The @scheduled decorator executes a function periodically (async).
     """
     def decorator(f):
@@ -255,7 +256,9 @@ def scheduled(interval=MINUTE):
                 time.sleep(interval)
                 f()
         t = threading.Thread(target=timer)
+        t.daemon = not blocking
         t.start()
+        return f
     return decorator
 
 # @scheduled(1)
@@ -461,6 +464,19 @@ def nwise(a, n=2):
 # for v in nwise([1, 2, 3, 4], n=2): # (1, 2), (2, 3), (3, 4)
 #     print(v)
 
+def flatten(a, type=list):
+    """ Returns a list of nested values (depth-first).
+    """
+    q = []
+    for v in a:
+        if isinstance(v, type):
+            q.extend(flatten(v, type))
+        else:
+            q.append(v)
+    return q
+
+# print(flatten([1, [2, [3, 4]]]))
+
 def choices(a, weights=[], k=1):
     """ Returns random elements from the given list,
         with optional (non-negative) probabilities.
@@ -641,9 +657,9 @@ def cd(*args):
     p = os.path.join(p, *args)
     return p
 
-# print(cd('loc.csv'))
+# print(cd('kb', 'en-loc.csv'))
 
-# for code, state, adj, region, gov, city, lang, rating in csv(cd('loc.csv')):
+# for code, state, adj, region, gov, city, lang, rating in csv(cd('kb', 'en-loc.csv')):
 #     print(state)
 
 #---- SQL -----------------------------------------------------------------------------------------
@@ -673,7 +689,7 @@ def schema(table, *fields, **type):
     i = 'create index if not exists `%s_%s` on `%s` (`%s`);'
     for k in fields:
         k = re.sub(r'^\#', '', k)  # '#name' => 'name'
-        v = affinity[type.get(k)]  #     str => 'text'
+        v = affinity[type.get(k)]  #    str  => 'text'
         s = s[:-2] + ', `%s` %s);' % (k, v)
     for k in fields:
         if k.startswith('#'):
@@ -694,7 +710,9 @@ class Database(object):
         self.connection = sqlite.connect(name, timeout)
         self.connection.row_factory = factory
         if schema:
-            for q in schema.split('\n'):
+            for q in schema.strip(';').split(';'):
+                q = q.strip()
+                q = q + ';'
                 self(q)
             self.commit()
 
@@ -706,7 +724,7 @@ class Database(object):
             if commit:
                 self.connection.commit()
         except Exception as e:
-            raise DatabaseError(str(e))
+            raise DatabaseError('%s' % e)
         else:
             return r
 
@@ -729,17 +747,17 @@ class Database(object):
     def find(self, table, *fields, **filters):
         return self(*SQL_SELECT(table, *fields, **filters))
 
-    def append(self, table, **fields):
-        return self(*SQL_INSERT(table, **fields), 
-            commit=fields.pop('commit', True)).lastrowid # id
+    def append(self, table,     **fields):
+        b = fields.pop('commit', True)
+        return self(*SQL_INSERT(table,     **fields), commit=b).lastrowid # id
 
     def update(self, table, id, **fields):
-        return self(*SQL_UPDATE(table, id, **fields), 
-            commit=fields.pop('commit', True)).rowcount  # int
+        b = fields.pop('commit', True)
+        return self(*SQL_UPDATE(table, id, **fields), commit=b).rowcount  # int
 
     def remove(self, table, id, **fields):
-        return self(*SQL_DELETE(table, id),
-            commit=fields.pop('commit', True)).rowcount  # int
+        b = fields.pop('commit', True)
+        return self(*SQL_DELETE(table, id          ), commit=b).rowcount  # int
 
     def __del__(self):
         try: 
@@ -884,7 +902,7 @@ def pw_ok(s1, s2):
     s1 = binascii.hexlify(s1)
     eq = True
     for ch1, ch2 in zip(s1, b(s)):
-        eq = ch1 == ch2 # contstant-time comparison
+        eq = eq and ch1 == ch2 # contstant-time comparison
     return eq
 
 # print(pw_ok('1234', pw('1234')))
@@ -2065,13 +2083,16 @@ def sample(data=[]):
         from the given list of (vector, label)-tuples.
     """
     # https://arxiv.org/pdf/1602.04938.pdf
-    f1 = collections.defaultdict(lambda: \
-         collections.Counter()) # {feature: {label: count}}
-    f2 = collections.Counter()  # {feature: count}
+
+    f1 = collections.defaultdict(float) # {label: count}
+    f2 = collections.defaultdict(float) # {feature: count}
+    f3 = collections.defaultdict(float) # {feature, label: count}
+    for v, label in data:
+        f1[label] += 1
     for v, label in data:
         for f in v:
-            f1[f][label] += 1
             f2[f] += 1
+            f3[f, label] += 1
 
     # Submodular pick:
     seen = set()
@@ -2081,7 +2102,7 @@ def sample(data=[]):
             w = 0
             for f in v:
                 if f not in seen:
-                    w += f1[f][label] * 2
+                    w += f3[f, label] * len(f1)
                     w -= f2[f]
             if x[0] < w:
                 x = w, v, label # greedy
@@ -2155,30 +2176,15 @@ def counterfactual(v, label, model):
 # This model is biased towards jailing black people:
 # print(counterfactual({'black': 1, '>25': 1, 'drugs': 1}, 'bail', m))
 
-YELLOW = '<span style="background: rgba(255, 255, 0, %.1f);">%s</span>'
-
-def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
-    """ Returns a string with markup for the given (word, weight)-dict.
-        By default, HTML simulates a yellow marker (opacity = 0.0-1.0).
+def hilite(s, words={}, style='background: rgba(255, 255, 0, %.1f);', format=max):
+    """ Returns a string with <mark> tags for given (word, weight)-items,
+        where background opacity of marked words represents their weight.
     """
-    a = [0 for ch in s]
-    for w, alpha in words.items():
-        w = re.escape(w)
-        w = re.compile(w, re.I)
-        for m in w.finditer(s):
-            for i in range(*m.span()):
-                if a[i] < alpha:
-                    a[i] = alpha # words can overlap
-    f = ''
-    i = 0
-    for a, g in itertools.groupby(a):
-        n = len(list(g))
-        w = s[i:i+n]
-        if a > 0:
-            w = format(w, a)
-        f += w
-        i += n
-    return f
+    e = '<mark style="%s">' % style, '</mark>'
+    t = trie(words)
+    m = t.search(s, sep=None)
+    s = mark(s, m, format, tag=e)
+    return s
 
 # print(hilite('loud meowing', {'loud': 1.0}))
 
@@ -2186,6 +2192,15 @@ def hilite(s, words={}, format=lambda w, alpha: YELLOW % (alpha, w)):
 
 #---- TEXT SEARCH ---------------------------------------------------------------------------------
 # The trie() function maps a dict of strings (i.e., a lexicon) to a tree of chars, for fast search.
+
+Match = collections.namedtuple('Match', ('start', 'end', 'word', 'tag'))
+
+def subs(m1, m2):
+    """ Returns True if the first match subsumes (=contains) the second.
+    """
+    return m1[0] <= m2[0] and m1[1] >= m2[1] and len(m1[2]) > len(m2[2])
+
+# print(subs((0, 11, 'superficial', -1), (0, 5, 'super', +1)))
 
 class trie(dict):
 
@@ -2198,8 +2213,8 @@ class trie(dict):
                 n = n.setdefault(k, {}) # {'w': {'o': {'w': {None: +0.5}}}}
             n[None] = v
 
-    def search(self, s, sep=lambda ch: ch.isalpha() is False):
-        """ Returns an iterator of (i, j, k, v)-tuples, 
+    def search(self, s, sep=lambda ch: not ch.isalpha()):
+        """ Returns an iterator of (i, j, k, v) matches 
             for keys bounded by the separator (or None).
         """
         n = len(s)
@@ -2210,14 +2225,52 @@ class trie(dict):
             while j < n and s[j] in b:
                 b = b[s[j]]
                 j += 1
-                if None in b and (
-                  sep is None or \
-                  sep(s[i-1:i]) and \
-                  sep(s[j:j+1])):
-                    yield i, j, s[i:j], b[None]
+                if None not in b:             # leaf?
+                    continue
+                if sep and not sep(s[i-1:i]): # prev
+                    continue
+                if sep and not sep(s[j:j+1]): # next
+                    continue
+                yield Match(i, j, s[i:j], b[None])
             i += 1
 
 # print(list(trie({'wow': +0.5, 'wtf': -0.5}).search('oh wow!')))
+
+#---- TEXT MARKUP ---------------------------------------------------------------------------------
+
+def mark(s, matches=[], format=concat, tag=('<mark class="%s">', '</mark>')):
+    """ Returns a HTML string with <mark> tags for matches.
+    """
+    m1 = collections.defaultdict(set)
+    m2 = []
+    # Merge class by character:
+    for i, j, k, v in matches:
+        for i in range(i, j):
+            m1[i].add(v)
+    # Merge character by class:
+    for i, v in sorted(m1.items()):
+        if not m2 or m2[-1][0] != v or m2[-1][1][1] < i:
+            m2.append((v, [i, i]))
+        m2[-1][1][1] += 1
+
+    f = u''
+    o = 0
+    for v, (i, j) in m2:
+        v = sorted(v)
+        v = format(v)
+        f = f + encode(s[o:i])
+        f = f + tag[0] % v
+        f = f + encode(s[i:j])
+        f = f + tag[1]
+        o = j
+    f += encode(s[o:])
+    return f
+
+# s = 'Klaatu stirs!'
+# t = trie({'Klaatu': 'cat'})
+# m = t.search(s)
+# 
+# print(mark(s, m))
 
 #---- TEXT ----------------------------------------------------------------------------------------
 
@@ -2279,7 +2332,7 @@ def anon(s):
     """ Returns the string with no URLs and @usernames.
     """
     s = re.sub(URL, 'http://', s)
-    s = re.sub(REF, '<name>', s)
+    s = re.sub(REF, '@[...]', s)
     return s
 
 # print(anon('@Textgain (https://www.textgain.com)'))
@@ -2451,7 +2504,7 @@ tokens = {
         r'[\w\.]+@\w+\.(com|net|org)'                                , # a.bc@gmail
         r'(?<![^\s])([A-Z]\.)+[A-Z]\.?'                              , # U.S.
         r'(?<![^\s])([A-Z]\.)(?= [A-Z])'                             , # J. R. R. Tolkien
-        r'\d+[.,:/″\']\d+%?'                                         , # 1.23
+        r'(?:\d+[.,:/″\'])+\d+%?'                                    , # 1.23
         r'\d+€|[$€£¥]\d+'                                            , # 100€
         r'(?<=\d)(kb|mb|gb|kg|mm|cm|km|m|ft|h|hrs|am|pm)(?=\W|$)'    , # 10 mb
         r'(?<!\w)(a\.m|ca|cfr?|etc|e\.?g|i\.?e|p\.m|P\.?S|vs|v)\.'   , # etc.
@@ -2677,9 +2730,11 @@ class Tagged(list):
 # for w, tag in Tagged(s):
 #     print(w, tag)
 
-TAGGER = LazyDict() # {'en': Model}
+tagger = LazyDict() # {'en': Model}
 
-TAGGER['en'] = lambda: Perceptron.load(open(cd('en-pos.json'), 'rb'))
+for f in glob.glob(cd('lm', '*-pos.json')):
+    tagger[f[-11:-9]] = lambda f=f: Perceptron.load(open(f, 'rb')) 
+#                               ^ early binding
 
 lexicon = { # top 10
     'en': {
@@ -2704,7 +2759,7 @@ lexicon = { # top 10
 def tag(s, language='en'): # ~5K tokens/sec
     """ Returns the tagged string as a list of (token, tag)-tuples.
     """
-    m = TAGGER[language]
+    m = tagger[language]
     a = s.split()
     a.insert(0, '')
     a.insert(0, '')
@@ -2890,8 +2945,8 @@ def chunk(pattern, text, replace=[]):
 
         w = '(?:%s)' % w
         w = '(?:%s )%s' % (w, x)                            # '(?:(?:-ing/[A-Z]+) )+'
-        w = re.sub(r'\(\?:-', r'(?:\S*', w)                 #     '\S*ing/[A-Z]+'
-        w = re.sub(r'\(\?:(\S*)-/', r'(?:\\b\1\S*', w)
+        w = re.sub(r'\(\?:-', r'(?:\\S*', w)                #     '\S*ing/[A-Z]+'
+        w = re.sub(r'\(\?:(\S*)-/', r'(?:\\b\1\\S*', w)
         w = re.sub(r'\/', '\\\/', w)
         p.append(w)
 
@@ -2973,24 +3028,26 @@ def head(phrase, tag='NP', language='en'):
 #---- KEYWORD EXTRACTION --------------------------------------------------------------------------
 # Keyword extraction aims to determine the topic of a text.
 
-df = LazyDict()
+df = LazyDict() # document frequency
 
-for f in glob.glob(cd('*-doc.json')):
-    df[f.split('-')[-2][-2:]] = lambda: json.load(open(f, 'rb'))
+for f in glob.glob(cd('lm', '*-doc.json')):
+    df[f[-11:-9]] = lambda f=f: json.load(open(f, 'rb'))
 
-def keywords(s, n=10, language='en'):
+def keywords(s, language='en', n=10):
     """ Returns a list of n keywords.
     """
-    s = tok(s, language)                            # "Boo Boo needs chow"
-    s = tag(s, language)                            # "Boo/NAME Boo/NAME needs/VERB chow/NOUN"
+    s = tok(s, language)                  # "Boo Boo needs chow"
+    s = tag(s, language)                  # "Boo/NAME Boo/NAME needs/VERB chow/NOUN"
     s = chunk('NAME+', s), \
         chunk('NOUN+', s)
-    s = itertools.chain(*s)                         # ['Boo/NAME Boo/NAME', 'chow/NOUN']
-    s = [(w for w, pos in p) for p in s]            # [['Boo', 'Boo'], ['chow']]
-    s = [' '.join(p).lower() for p in s]            # ['boo boo', 'chow']
-    f = zip(s, range(1, 1 + len(s)))                # [('boo boo', 1), ('chow', 2)]
-    f = dict({k: 1.0 / v for k, v in reversed(f)})  # {'boo boo': 1.0, 'chow': 0.5}
-    f = collections.Counter(s, **f)                 # {'boo boo': 2.0, 'chow': 1.5} (tf)
+    s = itertools.chain(*s)               # ['Boo/NAME Boo/NAME', 'chow/NOUN']
+    s = [(w for w, pos in p) for p in s]  # [['Boo', 'Boo'], ['chow']]
+    s = [' '.join(p).lower() for p in s]  # ['boo boo', 'chow']
+    f = zip(s, range(1, 1 + len(s)))      # [('boo boo', 1), ('chow', 2)]
+    f = list(f)
+    f = reversed(f)
+    f = dict({k: 1.0 / v for k, v in f})  # {'boo boo': 1.0, 'chow': 0.5}
+    f = collections.Counter(s, **f)       # {'boo boo': 2.0, 'chow': 1.5} (tf)
     f = f.most_common(n)
     return [k for k, v in f]
 
@@ -3021,8 +3078,8 @@ polarity = {
 
 polarity = LazyDict()
 
-for f in glob.glob(cd('*-pol.json')):
-    polarity[f.split('-')[-2][-2:]] = lambda: json.load(open(f, 'rb'))
+for f in glob.glob(cd('lm', '*-pov.json')): # point-of-view
+    polarity[f[-11:-9]] = lambda f=f: json.load(open(f, 'rb'))
 
 def sentiment(s, language='en'):
     """ Returns the polarity of the string as a float,
@@ -3033,15 +3090,22 @@ def sentiment(s, language='en'):
     s = s.lower()
     s = s.split()
     a = []
-    for i, w in enumerate(s):
-        if w in p:
-            n = p[w]
-            if i > 0:
-                if s[i-1] in negation.get(language, ()):     # not good
-                    n = n * -1.0
-                if s[i-1] in intensifiers.get(language, ()): # very bad
-                    n = n * +1.5
-            a.append(n)
+    i = 0
+    while i < len(s):
+        for n in (2, 1,): # n-grams
+            w = s[i:i+n]
+            w = ' '.join(w)
+            if w in p:
+                v = p[w]
+                if i > 0:
+                    if s[i-1] in negation.get(language, ()):     # "not good"
+                        v *= -1.0
+                    if s[i-1] in intensifiers.get(language, ()): # "very bad"
+                        v *= +1.5
+                a.append(v)
+                i += n - 1
+                break
+        i += 1
     v = avg(a)
     v = max(v, -1.0)
     v = min(v, +1.0)
@@ -3112,7 +3176,10 @@ class Embedding(collections.OrderedDict):
     def similar(self, w, n=10, distance=cos):
         """ Returns a list of n (similarity, word)-tuples.
         """
-        v1 = self.get(w, {})
+        if not isinstance(w, dict):
+            v1 = self.get(w, {})
+        else:
+            v1 = w
         q = ((1 - distance(v1, v2), w2) for w2, v2 in self.items())
         q = heapq.nlargest(n, q)
         return q
@@ -3149,11 +3216,18 @@ class Embedding(collections.OrderedDict):
 
         return e
 
-# e = Embedding(open('wp.txt').read())
-# for d, w in e.similar('king', 10):
-#     print(d, w)
+def add(v1, v2):
+    return {f: v1.get(f, 0) + v2.get(f, 0) for f in features((v1, v2))}
 
-# king = president, emperor, queen, leader, ...
+def sub(v1, v2):
+    return {f: v1.get(f, 0) - v2.get(f, 0) for f in features((v1, v2))}
+
+# e = open('glove.6B.50d.txt')
+# e = sliced(e, 0, 100000)
+# e = Embedding.load(e, 'txt')
+
+# print(e.similar('king', 10)) # = president, emperor, leader
+# print(e.similar(add(sub(e['king'], e['man']), e['woman']))) # = queen
 
 #---- WORDNET -------------------------------------------------------------------------------------
 # WordNet is a free lexical database of synonym sets, and relations between synonym sets.
@@ -3427,11 +3501,11 @@ class stream(list):
         self.bytes = bytes
 
     def __iter__(self):
-        b = '' # buffer
+        b = b'' # buffer
         while 1:
             try:
                 b = b + self.request.read(self.bytes)
-                b = b.split('\n')
+                b = b.split(b'\n')
                 for s in b[:-1]:
                     if s.strip(): 
                         yield s
@@ -4687,7 +4761,7 @@ class App(ThreadPoolMixIn, WSGIServer):
                     k = k.title()
                     yield u(k), u(v)
 
-        # Parse HTTP GET and POST data.
+        # Parse HTTP GET and POST data (application/x-www-form-urlencoded).
         # '?page=1' => (('page', '1'),)
         def query(env):
             GET, POST = (
@@ -5289,13 +5363,28 @@ def visualize(g, **kwargs):
 
 ###################################################################################################
 
-def setup(src='https://github.com/textgain/grasp/blob/master/'):
-    for f in (
-      'en-pos.json',
-      'en-pol.json',
-      'en-doc.json',
-      'loc.csv'):
-        if not os.path.existst(cd(f)):
-            s = os.path.join(src, f)
-            s = download(s)
-            open(cd(f), 'wb').write(s)
+def setup(src='https://github.com/textgain/grasp/blob/master/', language=('en',)):
+
+    if not os.path.exists(cd('lm')):        # language model
+        os.mkdir(cd('lm'))
+    if not os.path.exists(cd('kb')):        # knowledge base
+        os.mkdir(cd('kb'))
+
+    a = []
+    for k in language:
+        a.append(('lm', '%s-pos.json' % k)) # parts-of-speech
+        a.append(('lm', '%s-pov.json' % k)) # point-of-view
+        a.append(('lm', '%s-doc.json' % k)) # document frequency
+        a.append(('kb', '%s-loc.csv'  % k)) # locale
+        a.append(('kb', '%s-def.csv'  % k)) # definition
+        a.append(('kb', '%s-ref.csv'  % k)) # references
+    for f in a:
+        if not os.path.exists(cd(*f)):
+            try:
+                s = os.path.join(src, f[1])
+                s = download(s)
+                f = open(cd(*f), 'wb')
+                f.write(s)
+                f.close()
+            except NotFound:
+                pass
