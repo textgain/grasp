@@ -849,12 +849,12 @@ def SQL_DELETE(table, id):
 #---- ENCRYPTION ----------------------------------------------------------------------------------
 # The pw() function is secure enough for storing passwords; encrypt() and decrypt() are not secure.
 
-def key(n=32):
+alphanumeric = 'abcdefghijklmnopqrstuvwxyz' + 'ABCDEFGHIJKLMNOPQRSTUVWXYZ' + '0123456789'
+
+def key(n=32, chars=alphanumeric):
     """ Returns a new key of length n.
     """
-    k = os.urandom(256)
-    k = binascii.hexlify(k)[:n]
-    return u(k)
+    return ''.join(choices(chars, k=n))
 
 def stretch(k, n):
     """ Returns a new key of length n.
@@ -908,6 +908,36 @@ def pw_ok(s1, s2):
 # print(pw_ok('1234', pw('1234')))
 
 ##### ML ##########################################################################################
+
+#---- STATISTICS ----------------------------------------------------------------------------------
+
+def avg(a):
+    """ Returns the average (mean) of the given values.
+    """
+    a = list(a)
+    n = len(a) or 1
+    return sum(a) / float(n)
+
+def sd(a):
+    """ Returns the standard deviation of given values.
+    """
+    a = list(a)
+    n = len(a) or 1
+    m = avg(a)
+    return math.sqrt(sum((v - m) ** 2 for v in a) / n)
+
+def peaks(a, z=1):
+    """ Returns a list of indices of values that are
+        more than z standard deviations above the mean.
+    """
+    a = list(a)
+    m = avg(a)
+    s = sd(a)
+    a = ((v - m) / s for v in a)
+    a = [i for i, v in enumerate(a) if v > z]
+    return a
+
+# print(peaks([0, 0, 0, 10, 100, 1, 0], z=1))
 
 #---- VECTOR --------------------------------------------------------------------------------------
 # A vector is a {feature: weight} dict, with n features, or n dimensions.
@@ -1414,27 +1444,15 @@ def fit(Model, *args, **kwargs):
 # The Perceptron takes a list of examples and learns what features are associated with what labels.
 # The resulting "model" can then be used to predict the label of new examples.
 
-def avg(a):
-    a = list(a)
-    n = len(a) or 1
-    s = sum(a)
-    return float(s) / n
-
-def sd(a):
-    a = list(a)
-    n = len(a) or 1
-    m = avg(a)
-    return math.sqrt(sum((v - m) ** 2 for v in a) / n)
-
-def iavg(x, m=0.0, sd=0.0, t=0):
+def iavg(x, m=0.0, sd=0.0, n=0):
     """ Returns the iterative (mean, standard deviation, number of samples).
     """
-    t += 1
+    n += 1
     v  = sd ** 2 + m ** 2 # variance
-    v += (x ** 2 - v) / t
-    m += (x ** 1 - m) / t
-    sd = math.sqrt(v - m ** 2)
-    return (m, sd, t)
+    v += (x ** 2 - v) / n
+    m += (x ** 1 - m) / n
+    sd = (v - m ** 2) ** 0.5
+    return m, sd, n
 
 # p = iavg(1)     # (1.0, 0.0, 1)
 # p = iavg(2, *p) # (1.5, 0.5, 2)
@@ -1514,7 +1532,7 @@ class Perceptron(Model):
                     cumsum(guess, f, -1, self._t)
             self._t += 1
 
-        self._p = iavg(abs(p), *self._p) # (mean, sd, t)
+        self._p = iavg(abs(p), *self._p) # (mean, sd, n)
 
     def predict(self, v, normalize=True):
         """ Returns a dict of (label, probability)-items.
@@ -2955,10 +2973,10 @@ def chunk(pattern, text, replace=[]):
         m = (m.strip() for m in m.groups() if m)
         m = map(Phrase, m)
         m = tuple(m)
-        if len(m) > 1:
-            yield m
-        else:
+        if len(m) == 1:
             yield m[0]
+        if len(m) >= 2:
+            yield m
 
 # for m in \
 #   chunk('ADJ', 
@@ -3182,6 +3200,7 @@ class Embedding(collections.OrderedDict):
             v1 = w
         q = ((1 - distance(v1, v2), w2) for w2, v2 in self.items())
         q = heapq.nlargest(n, q)
+        q = [(w, v) for w, v in q if w > 0]
         return q
 
     def save(self, f, format='json'):
@@ -3205,9 +3224,9 @@ class Embedding(collections.OrderedDict):
         if format == 'json':
             e.update(json.loads(f.read()))
 
-        if format == 'txt':   # GloVe
-            for s in f:       # word1 0.0 0.0 0.0 ...
-                s = s.split() # word2 0.0 0.0 0.0 ...
+        if format == 'txt':      # GloVe
+            for s in f:          # word1 0.0 0.0 0.0 ...
+                s = s.split(' ') # word2 0.0 0.0 0.0 ...
                 w = s[0]
                 v = s[1:]
                 v = map(float, v)
@@ -3689,10 +3708,10 @@ setattr(google, 'annotate', annotate)
 # https://dev.twitter.com/streaming/overview/request-parameters
 
 keys['Twitter'] = OAuth(
-    'zinzNx4FFyLDQkOaTnR9zYRq7',
-    '2365345020-snrMR8jQ69WDZ0KbSGvF1b4O7kIyynJp9v3UySL', (
-    'VFlV2M9mimg8bZTTct9qVuOVdWvak5MmCfghtdB6B8SOQvINbL',
-    'MrsrcmKkyzWOTjoKVsPLVvCYRtMcDYaIx0NKIb6yhRIhv'
+    'oNWzGQbuYv4tgd5n0snq4mzS1',
+    '14898655-wKdOpCVsv12GKpt1oHoYhjUDXMAAZocJeB5hLSS7O', (
+    'xPkyeGifv6ptbc8vlJZVbCbnMf3rCcJNYX0oGoa7C3T0yTraJh',
+    '1dnAy1aEnuG71Eif2OIY7OC5zP6opYtZBTMlZVlIwCN90'
 ))
 
 Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'likes'))
@@ -3745,7 +3764,7 @@ class Twitter(object):
             yield v
             time.sleep(delay)
 
-    def search(self, q, language='', delay=5.5, cached=False, key=None):
+    def search(self, q, language='', delay=6, cached=False, key=None):
         """ Returns an iterator of tweets.
         """
         id = ''
@@ -3771,7 +3790,7 @@ class Twitter(object):
             if len(r) < 100:
                 return
 
-    def follow(self, q, language='', delay=5.5, cached=False, key=None):
+    def follow(self, q, language='', delay=6, cached=False, key=None):
         """ Returns an iterator of tweets for the given username.
         """
         return self.search(u'from:' + q, language, delay, cached, key)
@@ -3801,7 +3820,7 @@ class Twitter(object):
             if id == 0:
                 return
 
-    def likes(self, q, delay=60, cached=False, headers={'User-Agent': 'Grasp.py'}):
+    def likes(self, q, delay=75, cached=False, headers={'User-Agent': 'Grasp.py'}):
         """ Returns an iterator of usernames that liked the tweet with the given id.
         """
         r = 'https://twitter.com/i/activity/favorited_popup?id=%s' % q
@@ -3811,7 +3830,7 @@ class Twitter(object):
         for v in set(re.findall(r'screen-name="(.*?)"', r.get('htmlUsers', ''))):
             yield v
 
-    def profile(self, q, delay=1.0, cached=False, key=None):
+    def profile(self, q, delay=1, cached=False, key=None):
         """ Returns the username's (name, text, language, location, date, photo, followers, tweets).
         """
         k = key or keys['Twitter']
@@ -4634,6 +4653,18 @@ class ThreadPoolMixIn(SocketServer.ThreadingMixIn):
     def process_request(self, *args):
         self.pool.apply_async(self.process_request_thread, args)
 
+    def process_request_thread(self, *args):
+        try:
+            SocketServer.ThreadingMixIn.process_request_thread(self, *args)
+        except socket.timeout:
+            pass
+        except socket.error:
+            pass
+
+    def handle_error(self, *args):
+      # traceback.print_exc()
+        pass
+
 class RouteError(Exception):
     pass
 
@@ -4704,7 +4735,7 @@ WSGIServer = wsgiref.simple_server.WSGIServer
 
 class App(ThreadPoolMixIn, WSGIServer):
 
-    def __init__(self, host='127.0.0.1', port=8080, root=None, threads=10, log=sys.stderr):
+    def __init__(self, host='127.0.0.1', port=8080, root=None, threads=10):
         """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
         """
         WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
@@ -4715,6 +4746,18 @@ class App(ThreadPoolMixIn, WSGIServer):
         self.request  = HTTPRequest()
         self.response = HTTPResponse()
         self.generic  = generic
+
+    def run(self, host=None, port=None, debug=True):
+        """ Starts the server.
+        """
+        if host is None:
+            host = self.server_address[0]
+        if port is None:
+            port = self.server_address[1]
+        print('Starting server at %s:%s... press ctrl-c to stop.' % (host, port))
+        self.debug = debug
+        self.server_address = host, port
+        self.serve_forever()
 
     def route(self, path, rate=None, key=lambda request: request.ip):
         """ The @app.route(path) decorator defines the handler for the given path.
@@ -4742,13 +4785,6 @@ class App(ThreadPoolMixIn, WSGIServer):
     def error(self, f):
         self.generic = f
 
-    def run(self, debug=True):
-        """ Starts the server.
-        """
-        print('Starting server at %s:%s... press ctrl-c to stop.' % self.server_address)
-        self.debug = debug
-        self.serve_forever()
-
     def __call__(self, env, start_response):
 
         # Parse HTTP headers.
@@ -4764,13 +4800,17 @@ class App(ThreadPoolMixIn, WSGIServer):
         # Parse HTTP GET and POST data (application/x-www-form-urlencoded).
         # '?page=1' => (('page', '1'),)
         def query(env):
-            GET, POST = (
+            GET, POST = q1, q2 = (
                 env['QUERY_STRING'],
                 env['wsgi.input'].read(int(env.get('CONTENT_LENGTH') or 0))
             )
-            for k, v in urllib.parse.parse_qs(GET , True).items():
+            if isinstance(q1, bytes):
+                q1 = u(q1)
+            if isinstance(q2, bytes):
+                q2 = u(q2)
+            for k, v in urllib.parse.parse_qs(q1, True).items():
                 yield u(k), u(v[-1])
-            for k, v in urllib.parse.parse_qs(POST, True).items():
+            for k, v in urllib.parse.parse_qs(q2, True).items():
                 yield u(k), u(v[-1])
 
         # Set App.request (thread-safe).
@@ -4818,10 +4858,6 @@ class App(ThreadPoolMixIn, WSGIServer):
         # https://www.python.org/dev/peps/pep-0333/#the-start-response-callable
         start_response('%s %s' % (r.code, STATUS[r.code]), list(r.headers.items()))
         return [b(v)]
-
-    def handle_error(self, *args):
-        # SocketServer errors
-        traceback.print_exc()
 
 # app = application = App(threads=10)
 
