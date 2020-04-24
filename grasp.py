@@ -50,6 +50,7 @@ __copyright__ =  'Textgain'
 
 import sys
 import os
+import io
 import re
 import inspect
 import logging
@@ -60,7 +61,6 @@ import multiprocessing.pool
 import itertools
 import collections
 import unicodedata
-import codecs
 import socket; socket.setdefaulttimeout(10)
 import wsgiref
 import wsgiref.simple_server
@@ -324,7 +324,23 @@ class LazyDict(collections.abc.MutableMapping):
         return repr(dict(self))
 
 # models = LazyDict()
-# models['en'] = lambda: Perceptron('huge.json')
+# models['en'] = lambda: Perceptron('large.json')
+
+#---- PERSISTENT ----------------------------------------------------------------------------------
+# A persistent container stores values in a file.
+
+class PersistentDict(dict):
+
+    def __init__(self, path, *args, **kwargs):
+        if os.path.exists(path or ''):
+            self.update(json.load(open(path, 'rb')))
+        self.update(*args)
+        self.update(kwargs)
+        self.path = path
+
+    @atomic # (thread-safe)
+    def save(self):
+        json.dump(self, open(self.path, 'w')) # JSON
 
 ###################################################################################################
 
@@ -621,10 +637,10 @@ class CSV(table):
     def save(self, name=''):
         a = []
         for r in self:
-            r = ('"' + u(s).replace('"', '""') + '"' for s in r)
+            r = ('"%s"' % u(s).replace('"', '""') for s in r)
             r = self.separator.join(r)
             a.append(r)
-        f = codecs.open(name or self.name, 'w', encoding='utf-8')
+        f = io.open(name or self.name, 'w', encoding='utf-8')
         f.write('\n'.join(a))
         f.close()
 
@@ -1397,7 +1413,7 @@ class Model(object):
     def predict(self, v):
         raise NotImplementedError
 
-    # Model.save() writes a serialized JSON-string to a file-like.
+    # Model.save() writes a serialized JSON string to a file-like.
     # Model.load() deserializes it and returns the right subclass.
     # Models that have attributes which can't be serialized, e.g.,
     # ensembles, need to override the encoder and decoder methods.
@@ -4629,6 +4645,11 @@ def date(*v, **format):
             pass
     raise DateError('unknown date format: %s' % repr(v))
 
+def modified(path):
+    """ Returns a Date for the given file path (last modified).
+    """
+    return date(os.path.getmtime(path))
+
 ##### WWW #########################################################################################
 
 #---- APP -----------------------------------------------------------------------------------------
@@ -4846,11 +4867,11 @@ class App(ThreadPoolMixIn, WSGIServer):
             v = self.generic(r.code, traceback.format_exc() if self.debug else '')
 
         if isinstance(v, (dict, list)):
-            r.headers['Content-Type'] = 'application/json; charset=utf-8'
+            r.headers['Content-Type' ] = 'application/json; charset=utf-8'
             v = json.dumps(v)
-        if hasattr(v, 'name') and \
-           hasattr(v, 'read'):
-            r.headers['Content-Type'] = mimetypes.guess_type(v.name)[0] or ''
+        if hasattr(v, 'name') and hasattr(v, 'read'):
+            r.headers['Content-Type' ] = mimetypes.guess_type(v.name)[0] or ''
+            r.headers['Last-Modified'] = modified(v.name).format('%a, %d %b %Y %H:%M:%S GMT')
             v = v.read()
         if v is None:
             v = ''
@@ -5269,7 +5290,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
             s += '\n</edge>'
         s += '\n</graph>'
         s += '\n</graphml>'
-        f = codecs.open(path, 'w', encoding='utf-8')
+        f = io.open(path, 'w', encoding='utf-8')
         f.write(s)
         f.close()
 
