@@ -41,7 +41,7 @@ __copyright__ =  'Textgain'
 # NLP  Natural Language Processing  tokenization, part-of-speech tagging, sentiment analysis
 # ML   Machine Learning             clustering, classification, confusion matrix, n-grams
 # NET  Network Analysis             shortest paths, centrality, components, communities
-# ETC                               recipes for functions, strings, lists, ...
+# ETC                               recipes for functions, strings, lists, dates, ...
 
 # Grasp.py is based on the Pattern toolkit (https://github.com/clips/pattern), focusing on brevity.
 # Most functions have around 10 lines of code, and most algorithms have around 25-50 lines of code.
@@ -81,7 +81,6 @@ import mimetypes
 import glob
 import time
 import datetime
-import calendar
 import random
 import math
 import heapq
@@ -441,6 +440,11 @@ def b(v, encoding='utf-8'):
     return (u'%s' % v).encode()
 
 #---- ITERATION -----------------------------------------------------------------------------------
+
+def first(n, a):
+    """ Returns a iterator of values from index 0 to n.
+    """
+    return iter(itertools.islice(a, 0, n))
 
 def sliced(a, *ijn):
     """ Returns an iterator of values from index i to j, by step n.
@@ -2471,7 +2475,7 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
     if w in known: 
         return known[w]
     if language == 'en':
-        if re.search(r'(?i)ss|[^s]sis|[^mnotr]us$', w     ):   # ± 93%
+        if re.search(r'(?i)(ss|[^s]sis|[^mnotr]us)$', w    ):  # ± 93%
             return w
         for pl, sg in (                                        # ± 98% accurate (CELEX)
           (r'          ^(son|brother|father)s-' , '\\1-'   ),
@@ -2608,7 +2612,7 @@ breaks = {
 # A token can be a URL, domain or file name, email, without trailing commas.
 # A token can be a number, including decimals, thousands and currency signs.
 # A token can be a known (language-specific) abbreviation or contraction.
-# A token can be a named entity, emoticon, ora  HTML tag with attributes.
+# A token can be a named entity, emoticon, or a HTML tag with attributes.
 
 # Sentence break rules:
 # Sentence breaks are marked by .!? or by … if followed by a capital letter.
@@ -2706,22 +2710,32 @@ def ctx(*w):
         that can be used to train a part-of-speech tagger.
     """
     m = len(w) // 2 # middle
-    v = set()
+    v = dict()
     for i, (w, tag) in enumerate(w):
         i -= m
         if i == 0:
-            v.add(' ')                                 # bias
-            v.add('. %+d %i' % (i,  not w.isalpha()))  # punctuation
-            v.add('@ %+d %i' % (i, w[:+1].isupper()))  # capitalization
-            v.add('1 %+d %s' % (i, w[:+1]))
-            v.add('* %+d %s' % (i, w[-6:]))            # token
-            v.add('^ %+d %s' % (i, w[:+3]))            # token head
-            v.add('$ %+d %s' % (i, w[-3:]))            # token suffix
+            v.update({
+                ' '                                : 1, # bias
+                '- %+d %i' % (i, '-' in w        ) : 1, # hyphenation
+                '. %+d %i' % (i,  not w.isalpha()) : 1, # punctuation
+                '! %+d %i' % (i,      w.isupper()) : 1, # capitalization
+                '@ %+d %i' % (i, w[:1 ].isupper()) : 1, # capitalized?
+                '# %+d %s' % (i, w[:1 ]  ) : 1, # token head (1)
+                '^ %+d %s' % (i, w[:3 ]  ) : 1, # token head (3)
+                '* %+d %s' % (i, w[-6:]  ) : 1, # token
+                '$ %+d %s' % (i, w[-3:]  ) : 1, # token tail (3)
+                's %+d %s' % (i, w[-1:]  ) : 1, # token tail (1)
+            })
         else:
-            v.add('$ %+d %s' % (i, w[-3:]))            # token suffix left/right
-            v.add('? %+d %s' % (i, tag   ))            # token tag
-
-    return dict.fromkeys(v, 1)
+            v.update({
+                '? %+d %s' % (i, tag             ) : 1, # token tag L/R
+                '$ %+d %s' % (i, w[-3:]  ) : 1, # token tail (3)
+                's %+d %s' % (i, w[-1:]  ) : 1, # token tail (1)
+                
+                '# %+d %s' % (i, w[:1 ]  ) : 1, # token head (1)
+                '^ %+d %s' % (i, w[:3 ]  ) : 1, # token head (3)
+            })
+    return v
 
 # print(ctx(('The', 'DET'), ('cat', 'NOUN'), ('sat', 'VERB'))) # context of 'cat'
 #
@@ -2871,7 +2885,6 @@ def universal(w, tag, tagset=WEB):
 
 # WSJ = u(open(cd('/corpora/wsj.txt')).read())
 # WSJ = WSJ.split('\n')
-# WSJ = WSJ[:48000] # ~ 1M tokens
 # 
 # data = []
 # for s in WSJ:
@@ -4240,6 +4253,7 @@ class Document(HTMLParser, Element):
             pass
 
 DOM = Document
+dom = Document
 
 # dom = DOM(download('https://www.textgain.com'))
 # 
@@ -4439,6 +4453,8 @@ def plaintext(element, keep={}, ignore={'head', 'script', 'style', 'form'}, form
     s = s.strip()
     return s
 
+plain = plaintext
+
 # dom = DOM(download('https://www.textgain.com'))
 # txt = plaintext(dom, keep={'a': ['href']})
 # 
@@ -4599,10 +4615,10 @@ class Date(datetime.datetime):
 
     @property
     def timestamp(self):
-        return calendar.timegm(self.timetuple())
+        return time.mktime(self.timetuple())
 
     def format(self, s):
-        return u(self.strftime(s))
+        return self.strftime(s)
 
     def __str__(self):
         return self.strftime('%Y-%m-%d %H:%M:%S')
@@ -4633,7 +4649,7 @@ def date(*v, **format):
     if isinstance(v, (int, float)):
         return Date.fromtimestamp(v)
     if isinstance(v, datetime.datetime):
-        return Date.fromtimestamp(calendar.timegm(v.timetuple()))
+        return Date.fromtimestamp(time.mktime(v.timetuple()))
     try:
         return Date.fromtimestamp(rfc_2822(v)) 
     except: 
@@ -4649,6 +4665,67 @@ def modified(path):
     """ Returns a Date for the given file path (last modified).
     """
     return date(os.path.getmtime(path))
+
+#---- DATE IN TEXT --------------------------------------------------------------------------------
+
+temporal = {
+    'en': ((
+        r'(after|before|during)'                               ,
+        r'(at|in|of|on|to|from)'                               ,
+        r'(the|this|a|an)'                                     ,
+        r'(one|two|three|four|five|six|seven|eight|nine|ten)'  ,
+        r'(first|last|past|next|previous|coming)'              ,
+        r'\d{1,4}(st|nd|rd|th)?'                               ,
+        r'\d+-\d+'                                             ,
+    ), (
+        r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'   ,
+        r'(January|February|March|April|May|June|July|August)' ,
+        r'(Septem|Octo|Novem|Decem)ber'                        ,
+        r'(spring|summer|autumn|winter)'                       ,
+        r'(Mon|Tue|Wed|Thu|Fri|Sat|Sun)'                       ,
+        r'(Mon|Tues|Wednes|Thurs|Fri|Satur|Sun)days?'          ,
+        r'(minute|hour|day|week|weekend|month|year)s?|century' ,
+        r'(morning|midday|afternoon|evening|midnight|night)'   ,
+        r'(yesterday|today|tonight|tomorrow)'                  ,
+        r'\d+ ?(yr?|hr|min|sec)s?'                             , # 1hr
+        r'\d\d?(am|pm)'                                        , # 1am
+        r'\d\d?:\d\d(am|pm)?'                                  , # dd:mm
+        r'\d\d?[/-]\d\d?[/-]\d{4}'                             , # dd/mm/yyyy
+        r'\d{4}[/-]\d\d?[/-]\d\d?'                             , # yyyy/mm/dd
+        r'\d{4}[-–]\d{4}'                                      , # yyyy-yyyy
+        r'(19|20)\d\d'                                         , # yyyy
+        r'(AD|BC)'                                             ,
+    ), (
+        r'(am|pm|a\.m\.?|p\.m\.?|o\'?clock|CEST|CET|GMT|UTC)'  ,
+        r'(one|two|three|four|five|six|seven|eight|nine|ten)'  ,
+        r'(ago|after|before)'                                  ,
+        r'\d{1,4}(st|nd|rd|th)?'                               ,
+    ))
+}
+
+_RE_TEMP = r'((%s )*(%s )+(%s )?)+'
+
+def when(s, language='en'):
+    """ Returns a list of temporal references in the string.
+    """
+    s = s + ' '
+    s = s.replace(')', ' )')
+    s = s.replace(',', ' ,')
+    s = s.replace('.', ' .')
+    s = s.replace('a .m .', 'a.m.')
+    s = s.replace('p .m .', 'p.m.') 
+    r = temporal.get(language, ('   '))
+    r = ('|'.join(r) for r in r)
+    r = ('(%s)' % r  for r in r)
+    r = _RE_TEMP % tuple(r)
+    m = re.finditer(r, s, re.I)
+    m = (m.group() for m in m)
+    m = (m.strip() for m in m)
+    m = (m for m in m if m)
+    m = list(m)
+    return m
+
+# print when('the day after tomorrow')
 
 ##### WWW #########################################################################################
 
@@ -4869,7 +4946,8 @@ class App(ThreadPoolMixIn, WSGIServer):
         if isinstance(v, (dict, list)):
             r.headers['Content-Type' ] = 'application/json; charset=utf-8'
             v = json.dumps(v)
-        if hasattr(v, 'name') and hasattr(v, 'read'):
+        if hasattr(v, 'name') and \
+           hasattr(v, 'read'):
             r.headers['Content-Type' ] = mimetypes.guess_type(v.name)[0] or ''
             r.headers['Last-Modified'] = modified(v.name).format('%a, %d %b %Y %H:%M:%S GMT')
             v = v.read()
