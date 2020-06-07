@@ -1,8 +1,8 @@
 #Grasp.py – Explainable AI
 
-**Grasp** is a lightweight Explainable AI toolkit for Python 2 & 3, with building blocks for data mining, natural language processing (NLP), machine learning (ML) and network analysis. It has 300+ free, fast, clean, concise implementations of classic algorithms, with only ~25 lines of code per function, self-explanatory names, no external depencies, bundled into one well-documented file: [grasp.py](https://github.com/textgain/grasp) (200KB).
+**Grasp** is a lightweight explainable AI toolkit for Python 2 & 3, with building blocks for data mining, natural language processing (NLP), machine learning (ML) and network analysis. It has 300+ free, fast, clean  implementations of classic algorithms, with ~25 lines of code per function, self-explanatory names, no depencies, bundled into one well-documented file: [grasp.py](https://github.com/textgain/grasp) (200KB).
 
-**Grasp** is developed and used by [Textgain](https://textgain.com), a language tech company that uses open-source intelligence (OSINT) for societal good.
+**Grasp** is developed and used by [Textgain](https://textgain.com), a language tech company that uses AI for societal good.
 
 ##Do data mining
 
@@ -33,7 +33,7 @@ for tweet in first(10, twitter.search('from:textgain')): # latest 10
     print(tweet.date, tweet.text)
 ```
 
-**Deploy APIs** with `App`. It's friends with WSGI and Nginx:
+**Deploy APIs** with `App`. It's friendly with WSGI and Nginx:
 
 ```py
 app = App() # check http://127.0.0.1:8080/app?q=cat
@@ -87,5 +87,4 @@ v2 = vec('I hate cats! 😡', features=['c3', 'w1'])
 
 Features include `c1`, `c2`, `c3` (all 3 consecutive characters: *loved* → *lov*, *ove*, *ved*), `w1`, `w2`, `w3` (all 3 consecutive words) and `%` (style; average word length etc.).
 
-Grasp is a lightweight Python toolkit for data mining (search engines, servers, HTML DOM + CSS selectors, plaintext), Natural Language Processing (NLP; tokenization, multilingual part-of-speech tagging & sentiment analysis), Machine Learning (ML; clustering, classification, confusion matrix, n-grams),
-
+*We're writing docs iteratively, check back soon for updates.*
