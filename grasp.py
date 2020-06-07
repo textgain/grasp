@@ -2823,7 +2823,7 @@ lexical = [
 def tag(s, language='en'): # ~5K tokens/sec
     """ Returns the tagged string as a list of (token, tag)-tuples.
     """
-    f = lexicon[language]
+    f = lexicon.get(language, {})
     m = tagger[language]
     a = s.split()
     a.insert(0, '')
