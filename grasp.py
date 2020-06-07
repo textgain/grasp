@@ -611,6 +611,7 @@ class CSV(table):
         f = open(path, 'rb')
         f = (s.replace(b'\r\n', b'\n') for s in f)
         f = (s.replace(b'\r'  , b'\n') for s in f)
+        f = (s.replace(b'\0'  , b''  ) for s in f) # null byte
         s = next(f, b'')
         s = s.lstrip(b'\xef\xbb\xbf') # BOM
         s = s.lstrip(b'\xff\xfe')
@@ -2539,7 +2540,7 @@ tokens = {
         r'www\..*?\.[a-z]+'                                          , # www.goo.gl
         r'\w+\.(com?|net|org|info|be|cn|de|eu|fr|nl|ru|uk)'          , # google.com
         r'\w+\.(doc|gif|htm|jpg|mp\d|pdf|ppt|py|txt|xls|zip)'        , # cat.jpg
-        r'[\w\.]+@\w+\.(com|net|org)'                                , # a.bc@gmail
+        r'[\w\.\-]+@\w+\.(com|net|org)'                              , # a.bc@gmail
         r'(?<![^\s])([A-Z]\.)+[A-Z]\.?'                              , # U.S.
         r'(?<![^\s])([A-Z]\.)(?= [A-Z])'                             , # J. R. R. Tolkien
         r'(?:\d+[.,:/″\'])+\d+%?'                                    , # 1.23
@@ -2720,20 +2721,18 @@ def ctx(*w):
                 '. %+d %i' % (i,  not w.isalpha()) : 1, # punctuation
                 '! %+d %i' % (i,      w.isupper()) : 1, # capitalization
                 '@ %+d %i' % (i, w[:1 ].isupper()) : 1, # capitalized?
-                '# %+d %s' % (i, w[:1 ]  ) : 1, # token head (1)
-                '^ %+d %s' % (i, w[:3 ]  ) : 1, # token head (3)
-                '* %+d %s' % (i, w[-6:]  ) : 1, # token
-                '$ %+d %s' % (i, w[-3:]  ) : 1, # token tail (3)
-                's %+d %s' % (i, w[-1:]  ) : 1, # token tail (1)
+                '# %+d %s' % (i, w[:1 ].lower()  ) : 1, # token head (1)
+                '^ %+d %s' % (i, w[:3 ].lower()  ) : 1, # token head (3)
+                '* %+d %s' % (i, w[-6:].lower()  ) : 1, # token
+                '$ %+d %s' % (i, w[-3:].lower()  ) : 1, # token tail (3)
+                's %+d %s' % (i, w[-1:].lower()  ) : 1, # token tail (1)
             })
         else:
             v.update({
+                '# %+d %s' % (i, w[:1 ].lower()  ) : 1, # token head (1)
+                's %+d %s' % (i, w[-1:].lower()  ) : 1, # token tail (1)
+                '$ %+d %s' % (i, w[-3:].lower()  ) : 1, # token tail (3)
                 '? %+d %s' % (i, tag             ) : 1, # token tag L/R
-                '$ %+d %s' % (i, w[-3:]  ) : 1, # token tail (3)
-                's %+d %s' % (i, w[-1:]  ) : 1, # token tail (1)
-                
-                '# %+d %s' % (i, w[:1 ]  ) : 1, # token head (1)
-                '^ %+d %s' % (i, w[:3 ]  ) : 1, # token head (3)
             })
     return v
 
@@ -2743,11 +2742,13 @@ def ctx(*w):
 #     ' '        , 
 #     '$ -1 The' , 
 #     '? -1 DET' , 
+#     '- +0 0'   , 
 #     '. +0 0'   , 
+#     '! +0 0'   , 
 #     '@ +0 0'   , 
-#     '1 +0 c'   , 
-#     '* +0 cat' , 
+#     '# +0 c'   , 
 #     '^ +0 cat' , 
+#     '* +0 cat' , 
 #     '$ +0 cat' , 
 #     '$ +1 sat' , 
 #     '? +1 VERB', 
@@ -2784,9 +2785,9 @@ for f in glob.glob(cd('lm', '*-pos.json')):
     tagger[f[-11:-9]] = lambda f=f: Perceptron.load(open(f, 'rb')) 
 #                               ^ early binding
 
-lexicon = { # top 10
+lexicon = {
     'en': {
-        '.'    : 'PUNC',
+        '.'    : 'PUNC', # top 20
         ','    : 'PUNC',
         'a'    : 'DET' ,
         'an'   : 'DET' ,
@@ -2795,29 +2796,52 @@ lexicon = { # top 10
         'it'   : 'PRON',
         'is'   : 'VERB',
         'be'   : 'VERB',
-        'have' : 'VERB', 
+        'was'  : 'VERB',
         'has'  : 'VERB',
+        'have' : 'VERB',
+        'from' : 'PREP',
+        'for'  : 'PREP',
         'in'   : 'PREP',
         'to'   : 'PREP',
         'of'   : 'PREP',
+        'or'   : 'CONJ',
         'and'  : 'CONJ',
     }
 }
 
+lexical = [
+    (r'^[\W_]{4,}' , 'PUNC'), # /*----*/
+    (r'^[\d.,]+'   , 'NUM' ), # 99,999.9
+    (r'^@[\w_]+'   , 'NAME'), # @xyz
+    (r'@\w+\.\w+$' , 'NAME'), # @xyx.com
+    (r'^https?://' , 'URL' ), # https://
+    (r'^www\..'    , 'URL' ), # www.xyz
+    (r'^#\w+'      , '#'   ), # #xyz
+    (r'^:-?[()Dpo]', ':)'  ), # :-)
+]
+
 def tag(s, language='en'): # ~5K tokens/sec
     """ Returns the tagged string as a list of (token, tag)-tuples.
     """
+    f = lexicon[language]
     m = tagger[language]
     a = s.split()
     a.insert(0, '')
     a.insert(0, '')
     a.append('')
     a.append('')
-    a = [[w, lexicon.get(language, {}).get(w, '')] for w in a]
+    a = [[w, ''] for w in a]
     for w in nwise(a, n=5):
-        tag = m.predict(ctx(*w)) # {tag: probability}
-        tag = top(tag)           # (tag, probability)
-        tag = tag[0]
+        try:
+            tag = f[w[2][0]]              # lexicon word
+        except:
+            for r, tag in lexical:        # lexical rule
+                if re.search(r, w[2][0]):
+                    break
+            else:
+                tag = m.predict(ctx(*w))  # {tag: probability}
+                tag = top(tag)            # (tag, probability)
+                tag = tag[0]
         w[2][1] = tag
     a = a[2:-2]
     a = map(tuple, a)
@@ -4725,7 +4749,7 @@ def when(s, language='en'):
     m = list(m)
     return m
 
-# print when('the day after tomorrow')
+# print(when('the day after tomorrow'))
 
 ##### WWW #########################################################################################
 
