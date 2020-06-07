@@ -1,10 +1,10 @@
-#Grasp.py – Explainable AI
+# Grasp.py – Explainable AI
 
 **Grasp** is a lightweight explainable AI toolkit for Python 2 & 3, with building blocks for data mining, natural language processing (NLP), machine learning (ML) and network analysis. It has 300+ free, fast, clean  implementations of classic algorithms, with ~25 lines of code per function, self-explanatory names, no depencies, bundled into one well-documented file: [grasp.py](https://github.com/textgain/grasp) (200KB).
 
 **Grasp** is developed and used by [Textgain](https://textgain.com), a language tech company that uses AI for societal good.
 
-##Do data mining
+## Do data mining
 
 **Download stuff** with `download(url)` (or `dl`), with built-in caching and logging:
 
@@ -44,7 +44,7 @@ if __name__ == '__main__':
     app.run(host='127.0.0.1', port=8080)
 ```
 
-##Do NLP
+## Do NLP
 
 **Find words & sentences** with `tokenize(str)` (or `tok`), at ~125K words/sec:
 
@@ -68,7 +68,7 @@ print(sentiment('Awesome stuff! 😁')) # +0.5
 print(sentiment('Horrible crap! 😡')) # -1.0
 ```
 
-##Do ML
+## Do ML
 
 Machine Learning (ML) means algorithms that *learn by example* from humans, like showing them 10,000 spam messages and 10,000 real emails. The ML will then predict if new messages are spam or not. For example, it might'e learned that *lottery + winner* is statistically more likely to occur in spam – it's basically doing math on word counts fed by its teacher.
 
