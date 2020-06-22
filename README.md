@@ -1,6 +1,6 @@
 # Grasp.py – Explainable AI
 
-**Grasp** is a lightweight AI toolkit for Python, with tools for data mining, natural language processing (NLP), machine learning (ML) and network analysis. It has 300+ fast and essential algorithms, with ~25 lines of code per function, self-explanatory function names, no depencies, bundled into one well-documented file: [grasp.py](https://github.com/textgain/grasp) (200KB).
+**Grasp** is a lightweight AI toolkit for Python, with tools for data mining, natural language processing (NLP), machine learning (ML) and network analysis. It has 300+ fast and essential algorithms, with ~25 lines of code per function, self-explanatory function names, no dependencies, bundled into one well-documented file: [grasp.py](https://github.com/textgain/grasp) (200KB).
 
 **Grasp** is developed by [Textgain](https://textgain.com), a language tech company that uses AI for societal good.
 
@@ -151,7 +151,7 @@ print(top(pagerank(g))) # strongest node: d: 0.8
 
 ```py
 with open('g.html', 'w') as f:
-	f.write(viz(g, src='graph.js'))
+    f.write(viz(g, src='graph.js'))
 ```
 
 You'll need to set `src` to the [grasp/graph.js](https://github.com/textgain/grasp/blob/master/graph.js) lib.
@@ -170,11 +170,11 @@ print(date('Mon Jan 31 10:00:00 +0000 2000', format='%Y-%m-%d'))
 print(cd('kb', 'en-loc.csv')
 ```
 
-**Easy CSV** handling with `csv([path])`, a list of list of values:
+**Easy CSV** handling with `csv([path])`, a list of lists of values:
 
 ```py
 for code, country, _, _, _, _, _ in csv(cd('kb', 'en-loc.csv')):
-	print(code, country)
+    print(code, country)
 ```
 
 ```py
@@ -192,4 +192,4 @@ A big concern in AI is bias introduced by human trainers. Remember the `Model` t
 print(explain(vec('She hates dogs.'), m)) # why so negative?
 ```
 
-In the returned dict, the model'd explanation is: “you wrote _hat_ + _ate_ (_hate_)”.
+In the returned dict, the model's explanation is: “you wrote _hat_ + _ate_ (_hate_)”.
