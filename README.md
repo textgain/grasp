@@ -25,7 +25,7 @@ for e in dom(src)('a[href^="http"]'): # external links
 
 ```py
 for word, count in wc(plain(dom(src))).items():
-	print(word, count)
+    print(word, count)
 ```
 
 **Find facts** with `wikipedia(str)`:
