@@ -646,7 +646,7 @@ class CSV(table):
             r = self.separator.join(r)
             a.append(r)
         f = io.open(name or self.name, 'w', encoding='utf-8')
-        f.write('\n'.join(a))
+        f.write(u'\n'.join(a))
         f.close()
 
     def clear(self):
@@ -1454,8 +1454,11 @@ class Model(object):
                 setattr(m, k, v)
         return m
 
-def fit(Model, *args, **kwargs):
-    return Model(*args, **kwargs)
+def fit(*args, **kwargs):
+    try:
+        return Model.load(args[0])
+    except:
+        return kwargs.pop('model', Perceptron)(*args, **kwargs)
 
 #---- PERCEPTRON ----------------------------------------------------------------------------------
 # The Perceptron or single-layer neural network is a supervised machine learning algorithm.
@@ -3181,6 +3184,8 @@ def sentiment(s, language='en'):
     v = max(v, -1.0)
     v = min(v, +1.0)
     return v
+
+pov = sentiment
 
 # s = 'This movie is very bad!'
 # s = tokenize(s)
@@ -5375,7 +5380,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
     def save(self, path):
         # GraphML: http://graphml.graphdrawing.org
         from xml.sax.saxutils import escape
-        s  = '<?xml version="1.0" encoding="utf-8"?>'
+        s = u'<?xml version="1.0" encoding="utf-8"?>'
         s += '\n<graphml>'
         s += '\n<key for="node" id="label" attr.name="label" attr.type="string"/>'
         s += '\n<key for="edge" id="weight" attr.name="weight" attr.type="double"/>'
@@ -5519,6 +5524,8 @@ def visualize(g, **kwargs):
     k.update(kwargs)
     k = {k: json.dumps(v) for k, v in k.items()}
     return s % k
+
+viz = visualize
 
 ###################################################################################################
 
