@@ -32,7 +32,7 @@ for word, count in wc(plain(dom(src))).items():
 
 ```py
 for e in dom(wikipedia('cat', language='en'))('p'):
-	print(plain(e))
+    print(plain(e))
 ```
 
 **Find opinions** with `twitter.seach(str)`:
