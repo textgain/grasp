@@ -194,7 +194,8 @@ TV,Tuvalu,Tuvaluan,Oceania,"country (monarchy)",Funafuti,en
 UG,Uganda,Ugandan,Africa,"country (republic)",Kampala,"en, sw"
 UA,Ukraine,Ukrainian,Asia,"country (republic)",Kiev,uk
 AE,"United Arab Emirates",Emirati,"Middle East","country (monarchy)","Abu Dhabi",ar
-GB,"United Kingdom","British, UK",Europe,"country (monarchy)",London,en
+GB,"United Kingdom","British, English, UK",Europe,"country (monarchy)",London,en
+UK,"United Kingdom","British, English, UK",Europe,"country (monarchy)",London,en
 US,"United States","American, US","North America","country (republic)","Washington, D.C.","en, es, fr"
 UY,Uruguay,Uruguayan,"South America","country (republic)",Montevideo,es
 UZ,Uzbekistan,"Uzbekistani, Uzbek",Asia,"country (republic)",Tashkent,uz

@@ -680,7 +680,7 @@ def cd(*args):
 
 # print(cd('kb', 'en-loc.csv'))
 
-# for code, state, adj, region, gov, city, lang, rating in csv(cd('kb', 'en-loc.csv')):
+# for code, state, adj, region, gov, city, lang in csv(cd('kb', 'en-loc.csv')):
 #     print(state)
 
 #---- SQL -----------------------------------------------------------------------------------------
@@ -1288,11 +1288,16 @@ def vectorize(s, features=('ch3',)): # (vector)
     v[''] = 1 # bias
     for f in features:
         f = f.lower()
-        if f[0] == 'c': # 'c1' (punctuation, diacritics)
-            v.update(chngrams(s, n=int(f[-1])))
+        n = f[1:]
+        n = int(n)
+        if f[0] == '^': # '^1'
+            v[f + s[:+n]] = 1
+        if f[0] == '$': # '$1'
+            v[f + s[-n:]] = 1
+        if f[0] == 'c': # 'c1'
+            v.update(chngrams(s, n))
         if f[0] == 'w': # 'w1'
-            v.update(' '.join(w) for w in \
-                       ngrams(s, n=int(f[-1])))
+            v.update(' '.join(w) for w in ngrams(s, n))
         if f[0] == '%':
             v.update(style(s))
   # v = normalize(v)
@@ -2280,7 +2285,7 @@ class trie(dict):
 
 #---- TEXT MARKUP ---------------------------------------------------------------------------------
 
-def mark(s, matches=[], format=concat, tag=('<mark class="%s">', '</mark>')):
+def mark(s, matches=[], format=concat, tag=('<mark class="{}">', '</mark>')):
     """ Returns a HTML string with <mark> tags for matches.
     """
     m1 = collections.defaultdict(set)
@@ -2301,7 +2306,7 @@ def mark(s, matches=[], format=concat, tag=('<mark class="%s">', '</mark>')):
         v = sorted(v)
         v = format(v)
         f = f + encode(s[o:i])
-        f = f + tag[0] % v
+        f = f + tag[0].format(v)
         f = f + encode(s[i:j])
         f = f + tag[1]
         o = j
@@ -2430,13 +2435,22 @@ def destress(s, replace={}):
     for k, v in replace.items():
         s = s.replace(k, v)
     for k, v in {
-     u'ø' : 'o' ,
+     u'Æ' : 'Ae',
+     u'Œ' : 'Oe',
      u'æ' : 'ae',
      u'œ' : 'oe',
      u'ä' : 'ae',
      u'ö' : 'oe',
      u'ü' : 'ue',
      u'ß' : 'ss',
+     u'Þ' : 'Th',
+     u'þ' : 'th',
+     u'Đ' : 'Dj',
+     u'đ' : 'dj',
+     u'Ł' : 'L' ,
+     u'ł' : 'l' ,
+     u'Ø' : 'O' ,
+     u'ø' : 'o' ,
      u'“' : '"' ,
      u'”' : '"' ,
      u'‘' : "'" ,
@@ -3239,6 +3253,7 @@ class Embedding(collections.OrderedDict):
 
         if s:
             a = cooc(s, **kwargs) # {word1: {word2: count}}
+
             a = a.items()
             a = sorted(a, key=lambda wv: sum(wv[1].values()))
             a = reversed(a)
@@ -3491,6 +3506,7 @@ class TooManyRequests (Exception): pass # 429
 class Timeout         (Exception): pass
 
 cookies = cookielib.CookieJar()
+proxies = None # {'https': ...}
 context = None # ssl.SSLContext
 
 def request(url, data={}, headers={}, timeout=10):
@@ -3498,13 +3514,15 @@ def request(url, data={}, headers={}, timeout=10):
     """
     if isinstance(data, dict):
         if headers.get('Content-Type') == 'application/json':
-            data = json.dumps(data)
+            data = b(json.dumps(data))
         else:
-            data = urllib.parse.urlencode(data)
+            data = b(urllib.parse.urlencode(data))
 
     f = []
     if cookies:
         f.append(urllib.request.HTTPCookieProcessor(cookies))
+    if proxies:
+        f.append(urllib.request.ProxyHandler(proxies=proxies))
     if context:
         f.append(urllib.request.HTTPSHandler(context=context))
     try:
@@ -3904,9 +3922,9 @@ class Twitter(object):
           # r.get('id_str', '')
             r.get('name', ''),
             r.get('description', ''),
-            r.get('lang', ''),
+            r.get('lang', '') or '',
             r.get('location', ''),
-            r.get('created_at'),
+            r.get('created_at', ''),
             r.get('profile_image_url', ''),
             r.get('followers_count', 0),
             r.get('statuses_count', 0)
@@ -5021,6 +5039,9 @@ class App(ThreadPoolMixIn, WSGIServer):
 # Edges can have a weight, which is the cost or length of the path.
 # Edges can have a type, for example 'is-a' or 'is-part-of'.
 
+def nodes(g):
+    return set().union(g, *g.values()) # set((node1, node2))
+
 def dfs(g, n1, f=lambda *e: True, v=set()):
     """ Depth-first search.
         Calls f(n1, n2) on the given node, its adjacent nodes if True, and so on.
@@ -5098,25 +5119,27 @@ def betweenness(g, k=1000):
     """ Returns a dict of node id's and their centrality score (0.0-1.0),
         which is the amount of shortest paths that pass through a node.
     """
-    n = set().union(g, *g.values()) # all nodes
+    n = nodes(g)
     w = collections.Counter(n)
     if k:
-        n = list(shuffled(n))[:k]
+        n = shuffled(n)
+        n = list(n)[:k]
     for n in n:
         for p in shortest_paths(g, n):
             for n in p[1:-1]:
                 w[n] += 1
+ 
     # Normalize 0.0-1.0:
     m = max(w.values())
-    m = float(m or 1)
-    w = {n: w / m for n, w in w.items()}
+    m = float(m) or 1
+    w = {n: w[n] / m for n in w}
     return w
 
 def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
     """ Returns a dict of node id's and their centrality score (0.0-1.0),
         which is the amount of indirect incoming links to a node.
     """
-    n = set().union(g, *g.values()) # all nodes
+    n = nodes(g)
     v = dict.fromkeys(n, 1.0 / len(n))
     for i in range(iterations):                            #       A -> B -> C
         p = v.copy() # prior pagerank                      #      0.3  0.3  0.3
@@ -5182,7 +5205,7 @@ def components(g):
     """ Returns an iterator of components, largest-first,
         where each component is a set of connected nodes.
     """
-    n = set().union(g, *g.values()) # all nodes
+    n = nodes(g)
     a = [set((n,)) | set(g.get(n, ())) for n in n]
     for i in reversed(range(len(a))):
         for j in reversed(range(i + 1, len(a))):
@@ -5417,6 +5440,9 @@ class Graph(dict): # { node id1: { node id2: edge }}
         )
         return g
 
+
+#---- GRAPH CONNECTIVITY --------------------------------------------------------------------------
+
 def leaves(g):
     """ Returns the nodes with degree 1.
     """
@@ -5426,9 +5452,9 @@ def prune(g, degree=1, weight=None):
     """ Returns a graph with nodes and edges of given degree and weight (or up).
     """
     g = g.copy()
-    for e in list(e for e in g.edges if e.weight < weight):
+    for e in [e for e in g.edges if e.weight < weight]:
         g.pop(*e[:2])
-    for n in list(n for n in g.nodes if g.degree(n) < degree):
+    for n in [n for n in g.nodes if g.degree(n) < degree]:
         g.pop(n)
     return g
 
@@ -5487,6 +5513,61 @@ def difference(A, B):
 # # g has two disconnected subgraphs:
 # for g in map(g.sub, components(g)):
 #     print(list(g.nodes))
+
+#---- GRAPH VISUALIZATION -------------------------------------------------------------------------
+
+def layout(g, k=100, spring=0.5): # 0.0-1.0
+    """ Returns a dict with {node: (x, y)} coordinates.
+    """
+    n = list(g.nodes)
+    x = list(random.random() for _ in n)
+    y = list(random.random() for _ in n)
+
+    for _ in range(k):
+        for i in range(len(n)):
+            for j in range(i + 1, len(n)):
+                f1 = 0
+                f2 = 0
+                dx = x[i] - x[j]
+                dy = y[i] - y[j]
+                d2 = dx * dx + dy * dy
+                if d2 < 100e2:
+                    f1 = 10 / d2       # repulse
+                if g.edge(n[i], n[j]):
+                    f2 = spring / 2.0  # attract
+                x[i] += dx * (f1 - f2)
+                y[i] += dy * (f1 - f2)
+                x[j] -= dx * (f1 - f2)
+                y[j] -= dy * (f1 - f2)
+
+    p = zip(x, y)
+    p = zip(n, p)
+    p = dict(p)
+
+    return p
+
+def zoom(p=[], radius=1.0):
+    """ Returns an (x, y)-list scaled to the given radius.
+    """
+    def polar(x, y):
+        return math.sqrt(x * x + y * y), \
+               math.atan2(y, x), 
+    def cartesian(d, a):
+        return math.cos(a) * d, \
+               math.sin(a) * d
+
+    p = [polar(x, y) for x, y in p]
+    r = radius * max(d for d, a in p)
+    p = [cartesian(d / r, a) for d, a in p]
+    return p
+
+# layout = {
+#     1: (0, 0),
+#     2: (1,-1),
+#     3: (2, 0)
+# }
+# 
+# print(dict(zip(layout, zoom(layout.values()))))
 
 def visualize(g, **kwargs):
     """ Returns a string with a HTML5 <canvas> element,

@@ -28,7 +28,7 @@ for word, count in wc(plain(dom(src))).items():
     print(word, count)
 ```
 
-**Find facts** with `wikipedia(str)`:
+**Find articles** with `wikipedia(str)`, in HTML:
 
 ```py
 for e in dom(wikipedia('cat', language='en'))('p'):
@@ -58,7 +58,7 @@ def index(*path, **query):
 app.run('127.0.0.1', 8080, debug=True)
 ```
 
-Once the app is up, go check [http://127.0.0.1:8080/app?q=cat](http://127.0.0.1:8080/app?q=cat).
+Once this app is up, go check [http://127.0.0.1:8080/app?q=cat](http://127.0.0.1:8080/app?q=cat).
 
 ## Tools for Natural Language Processing
 
@@ -144,7 +144,7 @@ print(g.sp('a', 'd')) # shortest path: a → b → d
 ```
 
 ```py
-print(top(pagerank(g))) # strongest node: d: 0.8
+print(top(pagerank(g))) # strongest node: d, 0.8
 ```
 
 **See networks** with `viz(graph)`:
