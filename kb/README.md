@@ -27,9 +27,7 @@ Essential demographical data about **names** of people: <sup>[1](https://www.hei
 | 2   | where   | most common countries: _NL_, _US_, _IE_             |
 | 3   | when    | most births: _1920_, _1940_                         |
 
-To train a model that predicts gender by name, we can map each known name to a dict of features like suffix and letter pairs. For _Alice_ &rarr; _al_, _li_, _ic_, _ce_, _ice_, _lice_, ... 
-
-The model can learn from these features to predict the gender of unknown names with ~80% accuracy. For example, _Elice_ (_el_, _li_, _ic_, ...) resembles _Alice_ and is probably `f`.
+To train a model that predicts gender by name, we can map each known name to a dict of features like suffix and letter pairs. For _Alice_ &rarr; _al_, _li_, _ic_, _ce_, _ice_, _lice_, ... The model can learn from these features to predict the gender of unknown names with ~80% accuracy. For example, _Elice_ (_el_, _li_, _ic_, ...) resembles _Alice_ and is probably `f`.
 
 ```py
 from grasp import csv, fit, vec, top
@@ -51,5 +49,3 @@ m = fit(data) # P 78% R 79%
 ```py
 print(top(m.predict(v('Aragorn')))) # m
 ```
-
-<style>table { width: 100%; }</style>
