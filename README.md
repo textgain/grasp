@@ -4,8 +4,6 @@
 
 **Grasp** is developed by [Textgain](https://textgain.com), a language tech company that uses AI for societal good.
 
-_Life is short, Grasp code is short. Here is a short overview:_
-
 ## Tools for Data Mining
 
 **Download stuff** with `download(url)` (or `dl`), with built-in caching and logging:

@@ -5431,13 +5431,14 @@ class Graph(dict): # { node id1: { node id2: edge }}
         t = t.find('graph')
         d = t.get('edgedefault') == 'directed'
         g = cls(directed=d)
-        for n in t.iter('node'): g.add(unescape(n.get('id')))
-        for e in t.iter('edge'): g.add(
-            unescape(e.get('source')), 
-            unescape(e.get('target')), 
-            e.findtext('*[@key="weight"]', 1.0),
-            e.findtext('*[@key="type"]') or None
-        )
+        for n in t.iter('node'): 
+            g.add(unescape(n.get('id')))
+        for e in t.iter('edge'): 
+            g.add(unescape(e.get('source')), 
+                  unescape(e.get('target')), 
+                  e.findtext('*[@key="weight"]', 1.0),
+                  e.findtext('*[@key="type"]') or None
+            )
         return g
 
 
