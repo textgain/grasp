@@ -341,6 +341,9 @@ class PersistentDict(dict):
     def save(self):
         json.dump(self, open(self.path, 'w')) # JSON
 
+# db = PersistentDict('db.json', {'k': 'v'})
+# db.save()
+
 ###################################################################################################
 
 #---- LOG -----------------------------------------------------------------------------------------
@@ -1423,6 +1426,11 @@ class Model(object):
     def predict(self, v):
         raise NotImplementedError
 
+    # Model.test() returns (precision, recall) for given test set:
+
+    def test(self, data=[], target=None):
+        return test(self, target, data)
+
     # Model.save() writes a serialized JSON string to a file-like.
     # Model.load() deserializes it and returns the right subclass.
     # Models that have attributes which can't be serialized, e.g.,
@@ -1460,10 +1468,12 @@ class Model(object):
         return m
 
 def fit(*args, **kwargs):
+    m = kwargs.pop('model', NN) # 'KNN|NN|NB|DT|RF|RB'
+    m = globals().get(m, m)
     try:
         return Model.load(args[0])
     except:
-        return kwargs.pop('model', Perceptron)(*args, **kwargs)
+        return m(*args, **kwargs)
 
 #---- PERCEPTRON ----------------------------------------------------------------------------------
 # The Perceptron or single-layer neural network is a supervised machine learning algorithm.
@@ -1583,6 +1593,8 @@ class Perceptron(Model):
             p = softmax(p, a=(self._p[0] + self._p[1]))
         return p
 
+NN = NeuralNetwork = Perceptron
+
 # p = Perceptron(examples=[
 #     ({'woof':1, 'bark':1}, 'dog'),
 #     ({'meow':1, 'purr':1}, 'cat')], n=10)
@@ -1664,7 +1676,7 @@ class KNN(Model):
         self.examples.append((v, label))
         self.labels[label] += 1
 
-    def predict(self, v, k=10+1, distance=cos):
+    def predict(self, v, k=5, distance=cos):
         """ Returns a dict of (label, probability)-items.
         """
         p = dict.fromkeys(self.labels, 0.0)
@@ -1700,7 +1712,7 @@ class KNN(Model):
 
 class MLKNN(KNN):
 
-    def predict(self, v, k=10+1, distance=cos):
+    def predict(self, v, k=5, distance=cos):
         """ k-Nearest Neighbors learning algorithm (multi-label).
         """
         p = collections.Counter()
@@ -1816,6 +1828,8 @@ def rules(tree):
                 # ('#1 meow', '#2 cat', 0.5, True )
                 # ('#1 meow', '#3 dog', 0.5, False)
 
+DT = DecisionTree
+
 #---- DECISION TREE ENSEMBLE -----------------------------------------------------------------------
 # Multiple decision trees with majority vote consensus correct overfitting errors (lower variance).
 
@@ -1860,7 +1874,7 @@ class DecisionTreeEnsemble(Model):
         m = Model._decode(m)
         return m
 
-RandomForest = DecisionTreeEnsemble
+RF = RandomForest = DecisionTreeEnsemble
 
 #---- RANDOM BASELINE -----------------------------------------------------------------------------
 # The Random Baseline model can be used to compare a real model's performance to.
@@ -1882,6 +1896,8 @@ class Baseline(Model):
         k = choices(*k)[0]
         p[k] = 1.0
         return p
+
+RB = RandomBaseline = Baseline
 
 #---- PERFORMANCE ---------------------------------------------------------------------------------
 # Predicted labels will often include false positives and false negatives.
@@ -3149,10 +3165,16 @@ kw = keywords
 
 negation = {
     'en': {'no', 'not', "n't"},
+    'de': {'nicht', 'kein', 'keine', 'keinen'},
+    'fr': {'pas'},
+    'nl': {'niet', 'ni'},
 }
 
 intensifiers = {
-    'en': {'really', 'very'},
+    'en': { u'really'  , u'very' },
+    'de': { u'wirklich', u'sehr' },
+    'fr': { u'vraiment', u'très' },
+    'nl': { u'echt'    , u'heel' },
 }
 
 polarity = {
@@ -3190,6 +3212,8 @@ def sentiment(s, language='en'):
                         v *= -1.0
                     if s[i-1] in intensifiers.get(language, ()): # "very bad"
                         v *= +1.5
+                    if s[i-1] in p and v != p[w]:
+                        a.pop()
                 a.append(v)
                 i += n - 1
                 break
@@ -3432,7 +3456,7 @@ class Synset(tuple):
 # The Open standard for Authorization (OAuth) is used to encrypt requests, for example by Twitter.
 # The protocol is documented on https://tools.ietf.org/html/rfc5849. Do not change the code below.
 
-def oauth(url, data={}, method='GET', key='', token='', secret=('','')):
+def oauth(url, data={}, key='', token='', secret=('',''), method='GET'):
     """ Returns (url, data), where data is updated with OAuth 1.0 authorization.
     """
 
@@ -3775,13 +3799,12 @@ setattr(google, 'annotate', annotate)
 
 #---- TWITTER -------------------------------------------------------------------------------------
 # Using u(), oauth(), request() and stream() we can define a Twitter class.
-# Twitter.search(q) gives you tweets that contain the word q.
-# Twitter.stream(q) gives you tweets that contain the word q, live as they are posted.
-# Twitter.follow(q) gives you tweets posted by username q.
-# Twitter.followers(q) gives you usernames of people that follow q.
+# Twitter.search(q) yields tweets that contain word q.
+# Twitter.stream(q) yields tweets that contain word q, as a live stream.
+# Twitter.follow(q) yields tweets posted by user @q.
 
-# https://dev.twitter.com/docs/api/1.1
-# https://dev.twitter.com/streaming/overview/request-parameters
+# https://developer.twitter.com/en/docs/twitter-api
+# https://developer.twitter.com/en/docs/twitter-api/v1/rules-and-filtering
 
 keys['Twitter'] = OAuth(
     'oNWzGQbuYv4tgd5n0snq4mzS1',
@@ -3794,25 +3817,30 @@ Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'auth
 
 class Twitter(object):
 
-    def parse(self, r):
+    def tweet(self, r):
+        # Get tweet.text
         f = lambda r: decode(
-            r.get('extended_tweet', {}) \
-             .get('full_text',          # 240 characters (stream)
-            r.get('full_text',          # 240 characters (search)
-            r.get('text', '')))         # 140 characters (< 2017)
+            r.get('extended_tweet' , {}) \
+             .get('full_text'      ,       # 240 characters (stream)
+            r.get('full_text'      ,       # 240 characters (search)
+            r.get('text'           , ''))) # 140 characters (< 2017)
         )
-        a = (
-            r.get('id_str', ''),
-            r.get('created_at', ''),
-            r.get('lang', '').replace('und', ''),
-            r.get('user', {}).get('screen_name', ''),
-            r.get('favorite_count', 0)
-        )
+        # Get tweet.id, date, ...
+        a = [
+            r.get('id_str'         , ''),
+            r.get('created_at'     , ''),
+            r.get('lang'           , '').replace('und', ''),
+            r.get('user'           , {}) \
+             .get('screen_name'    , ''),
+            r.get('favorite_count' , 0 )
+        ]
+        # Get full retweet
         try:
             r = r['retweeted_status']
             s = 'RT @%s: %s' % (r['user']['screen_name'], f(r))
         except:
             s = f(r)
+        # Get full links
         try:
             r = r['entities']['media'][0]
             s = s.replace(r['url'], r['media_url_https'])
@@ -3824,28 +3852,26 @@ class Twitter(object):
     def stream(self, q, language='', timeout=60, delay=1, key=None):
         """ Returns an iterator of tweets (live).
         """
-        k = key or keys['Twitter']
         r = 'https://stream.twitter.com/1.1/statuses/filter.json', {
-            'language'   : language,
-            'track'      : q
+            'language' : language,
+            'track'    : q
         }
-        r = oauth(*r, key=k[0], token=k[1], secret=k[2])
+        r = oauth(*r + (key or keys['Twitter']))
         r = serialize(*r)
         r = request(r, timeout=timeout)
 
         for v in stream(r):
             v = u(v)
             v = json.loads(v)
-            v = self.parse(v)
+            v = self.tweet(v)
             yield v
             time.sleep(delay)
 
-    def search(self, q, language='', delay=6, cached=False, key=None):
+    def search(self, q, language='', delay=6, cached=False, key=None, raw=False):
         """ Returns an iterator of tweets.
         """
         id = ''
         for _ in range(10):
-            k = key or keys['Twitter']
             r = 'https://api.twitter.com/1.1/search/tweets.json', {
                 'tweet_mode' : 'extended',
                 'count'      : 100,
@@ -3853,14 +3879,14 @@ class Twitter(object):
                 'lang'       : language,
                 'q'          : q
             }
-            r = oauth(*r, key=k[0], token=k[1], secret=k[2])
+            r = oauth(*r + (key or keys['Twitter']))
             r = serialize(*r)
-            r = download(r, delay=delay, cached=cached) # 180 requests / 15 minutes
+            r = download(r, delay=delay, cached=cached) # 180 / 15min
             r = json.loads(u(r))
             r = r.get('statuses', [])
 
             for v in r:
-                yield self.parse(v)
+                yield v if raw else self.tweet(v)
             if len(r) > 0:
                 id = int(v['id_str']) - 1
             if len(r) < 100:
@@ -3876,15 +3902,14 @@ class Twitter(object):
         """
         id = -1
         while 1:
-            k = key or keys['Twitter']
             r = 'https://api.twitter.com/1.1/followers/list.json', {
                 'count'       : 200,
                 'cursor'      : id,
                 'screen_name' : q.lstrip('@')
             }
-            r = oauth(*r, key=k[0], token=k[1], secret=k[2])
+            r = oauth(*r + (key or keys['Twitter']))
             r = serialize(*r)
-            r = download(r, delay=delay, cached=cached) # 15 requests / 15 minutes
+            r = download(r, delay=delay, cached=cached) # 15 / 15min
             r = json.loads(u(r))
 
             for v in r.get('users', []):
@@ -3896,38 +3921,43 @@ class Twitter(object):
             if id == 0:
                 return
 
-    def likes(self, q, delay=75, cached=False, headers={'User-Agent': 'Grasp.py'}):
-        """ Returns an iterator of usernames that liked the tweet with the given id.
+    def retweets(self, q, delay=15, cached=False, key=None):
+        """ Returns an iterator of usernames that retweeted the tweet with the given id.
         """
-        r = 'https://twitter.com/i/activity/favorited_popup?id=%s' % q
-        r = download(r, headers=headers, delay=delay, cached=cached)
+        r = 'https://api.twitter.com/1.1/statuses/retweeters/ids.json', {
+            'stringify_ids' : True,
+            'count'         : 100,
+            'id'            : q
+        }
+        r = oauth(*r + (key or keys['Twitter']))
+        r = serialize(*r)
+        r = download(r, delay=delay, cached=cached) # 75 / 15min
         r = json.loads(u(r))
+        r = r.get('ids', [])
 
-        for v in set(re.findall(r'screen-name="(.*?)"', r.get('htmlUsers', ''))):
-            yield v
+        return r
 
     def profile(self, q, delay=1, cached=False, key=None):
         """ Returns the username's (name, text, language, location, date, photo, followers, tweets).
         """
-        k = key or keys['Twitter']
         r = 'https://api.twitter.com/1.1/users/show.json', {
             'screen_name' : q
         }
-        r = oauth(*r, key=k[0], token=k[1], secret=k[2])
+        r = oauth(*r + (key or keys['Twitter']))
         r = serialize(*r)
-        r = download(r, delay=delay, cached=cached) # 900 requests / 15 minutes
+        r = download(r, delay=delay, cached=cached) # 900 / 15min
         r = json.loads(u(r))
 
         return (
-          # r.get('id_str', '')
-            r.get('name', ''),
-            r.get('description', ''),
-            r.get('lang', '') or '',
-            r.get('location', ''),
-            r.get('created_at', ''),
-            r.get('profile_image_url', ''),
-            r.get('followers_count', 0),
-            r.get('statuses_count', 0)
+          # r.get('id_str'            , '')
+            r.get('name'              , ''),
+            r.get('description'       , ''),
+            r.get('lang'              , '') or '',
+            r.get('location'          , ''),
+            r.get('created_at'        , ''),
+            r.get('profile_image_url' , ''),
+            r.get('followers_count'   , 0 ),
+            r.get('statuses_count'    , 0 )
         )
 
     def __call__(self, *args, **kwargs):
@@ -3943,6 +3973,9 @@ twitter = Twitter()
 
 # for username in twitter.followers('textgain'):
 #     print(username)
+
+# for v in twitter('to:textgain', raw=True):
+#     print(v['in_reply_to_status_id'], twitter.tweet(v))
 
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
 
@@ -4756,9 +4789,7 @@ def when(s, language='en'):
     """ Returns a list of temporal references in the string.
     """
     s = s + ' '
-    s = s.replace(')', ' )')
-    s = s.replace(',', ' ,')
-    s = s.replace('.', ' .')
+    s = re.sub(r'([,.!?)])', ' \\1', s)
     s = s.replace('a .m .', 'a.m.')
     s = s.replace('p .m .', 'p.m.') 
     r = temporal.get(language, ('   '))
@@ -5147,13 +5178,16 @@ def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
             for n2, w in g.get(n1, {}).items():            # i=1  0.3  0.9  1.2
                 v[n2] += damping * w * p[n1] / len(g[n1])  # i=2  0.3  1.2  2.1
             v[n1] += 1 - damping                           # ...
+
         # Normalize:
-        d = sum(w ** 2 for w in v.values()) ** 0.5 or 1
+        d = sum(w * w for w in v.values()) ** 0.5 or 1
         v = {n: w / d for n, w in v.items()}
+
         # Converged?
         e = sum(abs(v[n] - p[n]) for n in v)
         if e < epsilon * len(n):
             break
+
     return v
 
 def cliques(g):
@@ -5624,8 +5658,7 @@ def setup(src='https://github.com/textgain/grasp/blob/master/', language=('en',)
         a.append(('lm', '%s-pov.json' % k)) # point-of-view
         a.append(('lm', '%s-doc.json' % k)) # document frequency
         a.append(('kb', '%s-loc.csv'  % k)) # locale
-        a.append(('kb', '%s-def.csv'  % k)) # definition
-        a.append(('kb', '%s-ref.csv'  % k)) # references
+        a.append(('kb', '%s-nom.csv'  % k)) # gender
     for f in a:
         if not os.path.exists(cd(*f)):
             try:
