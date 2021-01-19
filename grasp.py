@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.0'
+__version__   =  '2.1'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -681,10 +681,12 @@ def cd(*args):
     p = os.path.join(p, *args)
     return p
 
+GRASP = cd()
+
 # print(cd('kb', 'en-loc.csv'))
 
-# for code, state, adj, region, gov, city, lang in csv(cd('kb', 'en-loc.csv')):
-#     print(state)
+# for code, name, who, where, what, city, lang, flag in csv(cd(GRASP, 'kb', 'en-loc.csv')):
+#     print(name)
 
 #---- SQL -----------------------------------------------------------------------------------------
 # A database is a collection of tables, with rows and columns of structured data.
@@ -1420,6 +1422,9 @@ class Model(object):
     def __init__(self, examples=[], **kwargs):
         self.labels = {}
 
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
+
     def train(self, v, label=None):
         raise NotImplementedError
 
@@ -2077,10 +2082,13 @@ def pav(y=[]):
 # y = list(y)[1]
 # print(pav(y))
 
-class calibrate(Model):
+class Calibrated(Model):
+
+    def __repr__(self):
+        return 'Calibrated(%s)' % repr(self._model)
 
     def __init__(self, model, label, data=[]):
-        """ Returns a new Model calibrated on the given data,
+        """ Returns a model calibrated on the given data,
             which is a set of (vector, label)-tuples.
         """
         self._model = model
@@ -2099,25 +2107,39 @@ class calibrate(Model):
         i = 0
         # Linear interpolation:
         for p in range(100 + 1):
-            p *= 0.01
+            p = p * 0.01
             while x[i] < p:
                 i += 1
-            f[p] = (y[i-1] * (x[i] - p) + y[i] * (p - x[i-1])) / (x[i] - x[i-1])
+            f['%.2f' % p] = (y[i-1] * (x[i] - p) + y[i] * (p - x[i-1])) / (x[i] - x[i-1])
         self._f = f
 
     def predict(self, v):
         """ Returns the label's calibrated probability (0.0-1.0).
         """
         p = self._model.predict(v)[self._label]
-        p = self._f[p]
+        p = self._f['%.2f' % p]
+        p = {self._label: p}
         return p
 
-    def save(self, f):
-        raise NotImplementedError
-    
     @classmethod
-    def load(cls, f):
-        raise NotImplementedError
+    def _encode(cls, m):
+        m1 = Model._encode(m._model)
+        m2 = {
+            'class' : 'Calibrated',
+            'model' : m1, 
+            'label' : m._label, 
+                'f' : m._f, 
+        }
+        return m2
+
+    @classmethod
+    def _decode(cls, m):
+        m1 = Model._decode(m['model'])
+        m2 = calibrate(m1, m['label'])
+        m2._f = m['f']
+        return m2
+
+calibrate = Calibrated
 
 # data = []
 # for review, polarity in csv('reviews-assorted1000.csv'):
@@ -2250,6 +2272,52 @@ def hilite(s, words={}, style='background: rgba(255, 255, 0, %.1f);', format=max
     return s
 
 # print(hilite('loud meowing', {'loud': 1.0}))
+
+#---- CLASSIFIER ----------------------------------------------------------------------------------
+# The Classifier class combines a concrete model with its training data and vectorization function.
+
+class Classifier(object):
+
+    def data(self):
+        raise NotImplemented # [(example, label)]
+
+    def v(self, v):
+        raise NotImplemented # {}
+
+    def vectorized(self):
+        return [(self.v(v), k) for v, k in self.data()]
+
+    def __init__(self, path, *args, **kwargs): # model=NN
+        """ Returns a classifier with a trained model.
+        """
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                self.model = Model.load(f)
+        else:
+            with open(path, 'w') as f:
+                self.model = fit(self.vectorized(), *args, **kwargs)
+                self.model.save(f)
+
+    def __call__(self, v):
+        """ Returns the predicted (label, confidence).
+        """
+        return top(self.predict(v))
+
+    def predict(self, v, *args, **kwargs):
+        """ Returns the predicted {label: confidence, ...}.
+        """
+        v = self.v(v)
+        k = self.model.predict(v, *args, **kwargs)
+        return k
+
+    def test(self, model=NN, k=10, **kwargs):
+        """ Returns the average (precision, recall).
+        """
+        return kfoldcv(
+            model = globals().get(model, model),
+             data = self.vectorized(), 
+                k = k, **kwargs
+        )
 
 ##### NLP #########################################################################################
 
@@ -3164,17 +3232,17 @@ kw = keywords
 # for example whether a customer review is positive or negative about a product.
 
 negation = {
-    'en': {'no', 'not', "n't"},
-    'de': {'nicht', 'kein', 'keine', 'keinen'},
-    'fr': {'pas'},
-    'nl': {'niet', 'ni'},
+    'en': { 'no', 'not', "n't",            },
+    'de': { 'kein', 'keine', 'nicht'       },
+    'fr': { 'aucun', 'aucune', 'ne', 'pas' },
+    'nl': { 'geen', 'niet', 'nooit'        },
 }
 
 intensifiers = {
-    'en': { u'really'  , u'very' },
-    'de': { u'wirklich', u'sehr' },
-    'fr': { u'vraiment', u'très' },
-    'nl': { u'echt'    , u'heel' },
+    'en': { 'very', 'really', 'big'        },
+    'de': { 'sehr',                        },
+    'fr': {u'très', 'vraiment',            },
+    'nl': { 'echt', 'erg', 'heel', 'zeer'  },
 }
 
 polarity = {
@@ -3211,7 +3279,7 @@ def sentiment(s, language='en'):
                     if s[i-1] in negation.get(language, ()):     # "not good"
                         v *= -1.0
                     if s[i-1] in intensifiers.get(language, ()): # "very bad"
-                        v *= +1.5
+                        v *= +2.0
                     if s[i-1] in p and v != p[w]:
                         a.pop()
                 a.append(v)
@@ -3331,6 +3399,8 @@ class Embedding(collections.OrderedDict):
                 e[w] = v
 
         return e
+
+Embeddings = Embedding
 
 def add(v1, v2):
     return {f: v1.get(f, 0) + v2.get(f, 0) for f in features((v1, v2))}
@@ -3817,7 +3887,20 @@ Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'auth
 
 class Twitter(object):
 
+    def request(self, url, data={}, key=None, delay=1, cached=False):
+        """ Returns the Twitter API's JSON response as a dict.
+        """
+        r = (url, data) + (key or keys['Twitter'])
+        r = oauth(*r)
+        r = serialize(*r)
+        r = download(r, delay=delay, cached=cached)
+        r = u(r)
+        r = json.loads(r)
+        return r
+
     def tweet(self, r):
+        """ Returns the Twitter API's JSON response as a Tweet.
+        """
         # Get tweet.text
         f = lambda r: decode(
             r.get('extended_tweet' , {}) \
@@ -3879,10 +3962,7 @@ class Twitter(object):
                 'lang'       : language,
                 'q'          : q
             }
-            r = oauth(*r + (key or keys['Twitter']))
-            r = serialize(*r)
-            r = download(r, delay=delay, cached=cached) # 180 / 15min
-            r = json.loads(u(r))
+            r = self.request(*r + (key, delay, cached)) # 180 / 15min
             r = r.get('statuses', [])
 
             for v in r:
@@ -3907,10 +3987,7 @@ class Twitter(object):
                 'cursor'      : id,
                 'screen_name' : q.lstrip('@')
             }
-            r = oauth(*r + (key or keys['Twitter']))
-            r = serialize(*r)
-            r = download(r, delay=delay, cached=cached) # 15 / 15min
-            r = json.loads(u(r))
+            r = self.request(*r + (key, delay, cached)) # 15 / 15min
 
             for v in r.get('users', []):
                 yield v.get('screen_name')
@@ -3929,13 +4006,20 @@ class Twitter(object):
             'count'         : 100,
             'id'            : q
         }
-        r = oauth(*r + (key or keys['Twitter']))
-        r = serialize(*r)
-        r = download(r, delay=delay, cached=cached) # 75 / 15min
-        r = json.loads(u(r))
+        r = self.request(*r + (key, delay, cached)) # 75 / 15min
         r = r.get('ids', [])
 
         return r
+
+    def trends(self, q='', delay=15, cached=False, key=None):
+        """ Returns an iterator of trending topics for the region (WOEID).
+        """
+        r = 'https://api.twitter.com/1.1/trends/place.json', {'id': q or 1}
+        r = self.request(*r + (key, delay, cached)) # 75 / 15min
+
+        if r:
+            for r in r[0]['trends']:
+                yield r['name']
 
     def profile(self, q, delay=1, cached=False, key=None):
         """ Returns the username's (name, text, language, location, date, photo, followers, tweets).
@@ -3943,10 +4027,7 @@ class Twitter(object):
         r = 'https://api.twitter.com/1.1/users/show.json', {
             'screen_name' : q
         }
-        r = oauth(*r + (key or keys['Twitter']))
-        r = serialize(*r)
-        r = download(r, delay=delay, cached=cached) # 900 / 15min
-        r = json.loads(u(r))
+        r = self.request(*r + (key, delay, cached)) # 900 / 15min
 
         return (
           # r.get('id_str'            , '')
@@ -3964,6 +4045,19 @@ class Twitter(object):
         return self.search(*args, **kwargs)
 
 twitter = Twitter()
+
+# ISO 639-1 WOEIDs:
+
+woeid = {
+    'BE' : 23424757,
+    'DE' : 23424829,
+    'ES' : 23424950,
+    'FR' : 23424819,
+    'NL' : 23424909,
+    'RU' : 23424936,
+    'UK' : 23424975,
+    'US' : 23424977
+}
 
 # for tweet in twitter('cats', language='en'):
 #     print(tweet.text)
@@ -4720,16 +4814,20 @@ def date(*v, **format):
     """
     format = format.get('format', '%Y-%m-%d %H:%M:%S')
 
-    if len(v) > 1:
+    if len(v) >  1:
         return Date(*v) # (year, month, day, ...)
-    if len(v) < 1:
+    if len(v) <  1:
         return Date.now()
-    else:
+    if len(v) == 1:
         v = v[0]
-    if isinstance(v, (int, float)):
-        return Date.fromtimestamp(v)
     if isinstance(v, datetime.datetime):
-        return Date.fromtimestamp(time.mktime(v.timetuple()))
+        return Date.combine(v.date(), v.time())
+    if isinstance(v, int):
+        return Date.fromtimestamp(v)
+    if isinstance(v, float):
+        return Date.fromtimestamp(v)
+    if isinstance(v, tuple):
+        return Date(*v)
     try:
         return Date.fromtimestamp(rfc_2822(v)) 
     except: 
@@ -5017,6 +5115,12 @@ class App(ThreadPoolMixIn, WSGIServer):
                 r.code = e.code
             elif isinstance(e, RouteError):
                 r.code = 404
+            elif isinstance(e, NotFound):
+                r.c0de = 404
+            elif isinstance(e, Forbidden):
+                r.code = 403
+            elif isinstance(e, TooManyRequests):
+                r.code = 429
             else:
                 r.code = 500
             v = self.generic(r.code, traceback.format_exc() if self.debug else '')

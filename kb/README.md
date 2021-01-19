@@ -15,6 +15,7 @@ Essential geographical data about world **countries** and **states**:
 | 4   | what    | country government: _country (monarchy)_            |
 | 5   | city    | country capital: _London_, _Berlin_, _Paris_        |
 | 6   | lang    | country language(s): _en_, _de_, _fr_               |
+| 6   | flag    | country flag: 🇬🇧, 🇩🇪, 🇫🇷                           |
 
 ## en-nom.csv
 

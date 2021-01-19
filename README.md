@@ -69,9 +69,12 @@ print(tok("Mr. etc. aren't sentence breaks! ;) This is:.", language='en'))
 **Find word polarity** with `pov(str)` (point-of-view). Is it a positive or negative opinion?
 
 ```py
-print(pov(tok('Awesome stuff! 😁'))) # +0.5
-print(pov(tok('Horrible crap! 😡'))) # -1.0
+print(pov(tok('Nice!', language='en'))) # +0.6
+print(pov(tok('Dumb.', language='en'))) # -0.4
 ```
+
+* For de, en, fr, nl, with ~72% accuracy.
+* You'll need the language models in [grasp/lm](https://github.com/textgain/grasp/tree/master/lm).
 
 **Find word types** with `tag(str)` in 10+ languages using robust ML models from [UD](https://universaldependencies.org):
 
