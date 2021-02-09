@@ -1046,7 +1046,7 @@ def scale(v, x=0.0, y=1.0):
     """
     a = min(v.values())
     b = max(v.values())
-    return {f: float(w - a) / (b - a) * (y - x) + x for f, w in v.items()}
+    return {f: float(w - a) / (b - a or 1) * (y - x) + x for f, w in v.items()}
 
 def unit(v):
     """ Returns a vector with normalized weights (length 1).
@@ -5009,7 +5009,7 @@ WSGIServer = wsgiref.simple_server.WSGIServer
 
 class App(ThreadPoolMixIn, WSGIServer):
 
-    def __init__(self, host='127.0.0.1', port=8080, root=None, threads=10):
+    def __init__(self, host='127.0.0.1', port=8080, root=None, threads=10, debug=False):
         """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
         """
         WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
@@ -5020,6 +5020,7 @@ class App(ThreadPoolMixIn, WSGIServer):
         self.request  = HTTPRequest()
         self.response = HTTPResponse()
         self.generic  = generic
+        self.debug    = debug
 
     def run(self, host=None, port=None, debug=True):
         """ Starts the server.
