@@ -71,6 +71,7 @@ import hmac
 import base64
 import binascii
 import email
+import cgi
 import xml.etree.ElementTree as ElementTree
 import sqlite3 as sqlite
 import csv as csvlib
@@ -5072,21 +5073,31 @@ class App(ThreadPoolMixIn, WSGIServer):
                     k = k.title()
                     yield u(k), u(v)
 
-        # Parse HTTP GET and POST data (application/x-www-form-urlencoded).
+        # Parse HTTP GET and POST data.
         # '?page=1' => (('page', '1'),)
         def query(env):
-            GET, POST = q1, q2 = (
-                env['QUERY_STRING'],
-                env['wsgi.input'].read(int(env.get('CONTENT_LENGTH') or 0))
-            )
+            h1 = env.get('CONTENT_TYPE'  )
+            h2 = env.get('CONTENT_LENGTH')
+            q1 = env.get('QUERY_STRING'  ) # GET 
+            q2 = env.get('wsgi.input'    ) # POST
+
+            if h1.startswith('multipart'):
+                q2 = cgi.FieldStorage(q2, environ=env)
+                q2 = {k: [q2[k]] for k in q2}
+            else: # application/x-www-form-urlencoded 
+                q2 = q2.read(int(h2 or 0))
             if isinstance(q1, bytes):
                 q1 = u(q1)
             if isinstance(q2, bytes):
                 q2 = u(q2)
-            for k, v in urllib.parse.parse_qs(q1, True).items():
-                yield u(k), u(v[-1])
-            for k, v in urllib.parse.parse_qs(q2, True).items():
-                yield u(k), u(v[-1])
+            if isinstance(q1, unicode):
+                q1 = urllib.parse.parse_qs(q1, True)
+            if isinstance(q2, unicode):
+                q2 = urllib.parse.parse_qs(q2, True)
+            for k, v in q1.items():
+                yield u(k), v[-1]
+            for k, v in q2.items():
+                yield u(k), v[-1]
 
         # Set App.request (thread-safe).
         r = self.request
