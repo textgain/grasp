@@ -2391,9 +2391,9 @@ def mark(s, matches=[], format=concat, tag=('<mark class="{}">', '</mark>')):
         v = sorted(v)
         v = format(v)
         f = f + encode(s[o:i])
-        f = f + tag[0].format(v)
+        f = f + u(tag[0]).format(v)
         f = f + encode(s[i:j])
-        f = f + tag[1]
+        f = f + u(tag[1])
         o = j
     f += encode(s[o:])
     return f
@@ -5063,6 +5063,9 @@ class App(ThreadPoolMixIn, WSGIServer):
 
     def __call__(self, env, start_response):
 
+        def wrap(v):
+            return v if type(v) is list else [v]
+
         # Parse HTTP headers.
         # 'HTTP_USER_AGENT' => 'User-Agent'
         def headers(env):
@@ -5083,8 +5086,8 @@ class App(ThreadPoolMixIn, WSGIServer):
 
             if h1.startswith('multipart'):
                 q2 = cgi.FieldStorage(q2, environ=env)
-                q2 = {k: [q2[k]] for k in q2}
-            else: # application/x-www-form-urlencoded 
+                q2 = {k: [wrap(q2[k])] for k in q2}
+            else: # application/x-www-form-urlencoded
                 q2 = q2.read(int(h2 or 0))
             if isinstance(q1, bytes):
                 q1 = u(q1)
@@ -5095,9 +5098,9 @@ class App(ThreadPoolMixIn, WSGIServer):
             if isinstance(q2, unicode):
                 q2 = urllib.parse.parse_qs(q2, True)
             for k, v in q1.items():
-                yield u(k), v[-1]
+                yield k, v[-1]
             for k, v in q2.items():
-                yield u(k), v[-1]
+                yield k, v[-1]
 
         # Set App.request (thread-safe).
         r = self.request
