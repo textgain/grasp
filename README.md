@@ -60,6 +60,12 @@ Once this app is up, go check [http://127.0.0.1:8080/app?q=cat](http://127.0.0.1
 
 ## Tools for Natural Language Processing
 
+**Find language** with `lang(str)` for 40+ languages and ~92% accuracy:
+
+```py
+print(lang('The cat sat on the mat.')) # en
+```
+
 **Find words & sentences** with `tok(str)` (tokenize) at ~125K words/sec:
 
 ```py

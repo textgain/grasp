@@ -563,6 +563,13 @@ class tmp(object):
 #     for row in csv(f.name):
 #         print(row)
 
+def unzip(f):
+    """ Returns the opened .zip file.
+    """
+    f = zipfile.ZipFile(f)
+    f = f.open(f.namelist()[0])
+    return f
+
 ##### DB ##########################################################################################
 
 #---- CSV -----------------------------------------------------------------------------------------
@@ -2617,6 +2624,25 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
 
 # print(sg('avalanches')) # avalanche
 
+@static(m=None)
+def lang(s, confidence=0.75):
+    """ Returns the language of the given string (en/es/de/fr...).
+    """
+    if not lang.m:
+        m = lang.m = Model.load(unzip(cd('lm', '~lang.json.zip')))
+    else:
+        m = lang.m
+
+    v = vec(s, ('c1', 'c2'))
+    k = m.predict(v) # 92.5%
+    k = top(k)
+
+    return k[0] if k[1] >= confidence else ''
+
+language = lang
+
+# print(lang('the cat sat on the mat'))
+
 #---- TOKENIZER -----------------------------------------------------------------------------------
 # The tokenize() function identifies tokens (= words, symbols) and sentence breaks in a string.
 # The complex task involves handling abbreviations, contractions, hyphenation, emoticons, URLs, ...
@@ -2883,9 +2909,9 @@ class Tagged(list):
 
 tagger = LazyDict() # {'en': Model}
 
-for f in glob.glob(cd('lm', '*-pos.json')):
-    tagger[f[-11:-9]] = lambda f=f: Perceptron.load(open(f, 'rb')) 
-#                               ^ early binding
+for f in glob.glob(cd('lm', '*-pos.json.zip')):
+    tagger[f[-15:-13]] = lambda f=f: Perceptron.load(unzip(f))
+#                                ^ early binding
 
 lexicon = {
     'en': {
@@ -3203,8 +3229,8 @@ def head(phrase, tag='NP', language='en'):
 
 df = LazyDict() # document frequency
 
-for f in glob.glob(cd('lm', '*-doc.json')):
-    df[f[-11:-9]] = lambda f=f: json.load(open(f, 'rb'))
+for f in glob.glob(cd('lm', '*-doc.json.zip')):
+    df[f[-15:-13]] = lambda f=f: json.load(unzip(f))
 
 def keywords(s, language='en', n=10):
     """ Returns a list of n keywords.
@@ -3257,8 +3283,8 @@ polarity = {
 
 polarity = LazyDict()
 
-for f in glob.glob(cd('lm', '*-pov.json')): # point-of-view
-    polarity[f[-11:-9]] = lambda f=f: json.load(open(f, 'rb'))
+for f in glob.glob(cd('lm', '*-pov.json.zip')): # point-of-view
+    polarity[f[-15:-13]] = lambda f=f: json.load(unzip(f))
 
 def sentiment(s, language='en'):
     """ Returns the polarity of the string as a float,
@@ -4822,7 +4848,7 @@ def date(*v, **format):
     if len(v) == 1:
         v = v[0]
     if isinstance(v, datetime.datetime):
-        return Date.combine(v.date(), v.time())
+        return Date.combine(v.date(), v.time(), d.tzinfo)
     if isinstance(v, int):
         return Date.fromtimestamp(v)
     if isinstance(v, float):
@@ -4844,6 +4870,14 @@ def modified(path):
     """ Returns a Date for the given file path (last modified).
     """
     return date(os.path.getmtime(path))
+
+def tz(d):
+    """ Returns a Date with tzinfo (timezone-aware) if missing.
+    """
+    if not d.tzinfo:
+        return date(d.replace(tzinfo=datetime.timezone.utc))
+    else:
+        return date(d)
 
 #---- DATE IN TEXT --------------------------------------------------------------------------------
 
@@ -5063,9 +5097,6 @@ class App(ThreadPoolMixIn, WSGIServer):
 
     def __call__(self, env, start_response):
 
-        def wrap(v):
-            return v if type(v) is list else [v]
-
         # Parse HTTP headers.
         # 'HTTP_USER_AGENT' => 'User-Agent'
         def headers(env):
@@ -5086,7 +5117,7 @@ class App(ThreadPoolMixIn, WSGIServer):
 
             if h1.startswith('multipart'):
                 q2 = cgi.FieldStorage(q2, environ=env)
-                q2 = {k: [wrap(q2[k])] for k in q2}
+                q2 = {k: [q2[k]] for k in q2}
             else: # application/x-www-form-urlencoded
                 q2 = q2.read(int(h2 or 0))
             if isinstance(q1, bytes):
@@ -5766,18 +5797,19 @@ viz = visualize
 
 def setup(src='https://github.com/textgain/grasp/blob/master/', language=('en',)):
 
-    if not os.path.exists(cd('lm')):        # language model
+    if not os.path.exists(cd('lm')):            # language model
         os.mkdir(cd('lm'))
-    if not os.path.exists(cd('kb')):        # knowledge base
+    if not os.path.exists(cd('kb')):            # knowledge base
         os.mkdir(cd('kb'))
 
     a = []
     for k in language:
-        a.append(('lm', '%s-pos.json' % k)) # parts-of-speech
-        a.append(('lm', '%s-pov.json' % k)) # point-of-view
-        a.append(('lm', '%s-doc.json' % k)) # document frequency
-        a.append(('kb', '%s-loc.csv'  % k)) # locale
-        a.append(('kb', '%s-nom.csv'  % k)) # gender
+        a.append(('lm',  '~lang.json.zip' % k)) # language detection
+        a.append(('lm', '%s-pos.json.zip' % k)) # parts-of-speech
+        a.append(('lm', '%s-pov.json.zip' % k)) # point-of-view
+        a.append(('lm', '%s-doc.json.zip' % k)) # document frequency
+        a.append(('kb', '%s-loc.csv'      % k)) # locale
+        a.append(('kb', '%s-nom.csv'      % k)) # gender
     for f in a:
         if not os.path.exists(cd(*f)):
             try:
