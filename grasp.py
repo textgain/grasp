@@ -5064,7 +5064,11 @@ class App(ThreadPoolMixIn, WSGIServer):
             host = self.server_address[0]
         if port is None:
             port = self.server_address[1]
+        if debug:
+            autoreload(self)
+
         print('Starting server at %s:%s... press ctrl-c to stop.' % (host, port))
+
         self.debug = debug
         self.server_address = host, port
         self.serve_forever()
@@ -5207,6 +5211,31 @@ class App(ThreadPoolMixIn, WSGIServer):
 # sys.stderr = os.devnull # (silent)
 
 # app.run()
+
+#---- APP RELOAD ----------------------------------------------------------------------------------
+
+def autoreload(app):
+    """ Restarts the modified script running the app.
+    """
+    @scheduled(1)
+    @static(app=app, t=date(), f=\
+        inspect.getouterframes(
+        inspect.currentframe())[2][1])
+    def _():
+        try:
+            t = modified(_.f)
+            if _.t > t:
+                return
+            _.t = t
+            _.app.shutdown()
+            _.app.server_close()
+            os.execl(
+                sys.executable, 
+                sys.executable, 
+               *sys.argv
+            )
+        except:
+            pass
 
 ##### NET #########################################################################################
 
