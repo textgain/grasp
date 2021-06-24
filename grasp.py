@@ -2318,14 +2318,10 @@ class Classifier(object):
         k = self.model.predict(v, *args, **kwargs)
         return k
 
-    def test(self, model=NN, k=10, **kwargs):
+    def test(self, k=10, **kwargs):
         """ Returns the average (precision, recall).
         """
-        return kfoldcv(
-            model = globals().get(model, model),
-             data = self.vectorized(), 
-                k = k, **kwargs
-        )
+        return kfoldcv(self.model.__class__, self.vectorized(), k=k, **kwargs)
 
 ##### NLP #########################################################################################
 
@@ -2349,7 +2345,9 @@ class trie(dict):
         for k, v in lexicon.items():
             n = self
             for k in k:
-                n = n.setdefault(k, {}) # {'w': {'o': {'w': {None: +0.5}}}}
+                if k not in n:
+                    n[k] = {} # {'w': {'o': {'w': {None: +0.5}}}}
+                n = n[k]
             n[None] = v
 
     def search(self, s, sep=lambda ch: not ch.isalpha()):
@@ -4109,6 +4107,7 @@ BIBLIOGRAPHY = {
     '.reference'         , # [1]
     '.mw-editsection'    , # [edit]
     '.noprint'           , # [citation needed]
+    '.mw-empty-elt'      ,
     'h2 < #see_also'     ,
     'h2 < #see_also ~ *' ,
     'h2 < #notes'        ,
@@ -4135,7 +4134,7 @@ def wikipedia(q='', language='en', delay=1, cached=True):
 
 # 1. Parse HTML source
 
-# src = cached(wikipedia, 'Arnold Schwarzenegger', language='en')
+# src = wikipedia('Arnold Schwarzenegger', language='en')
 # dom = DOM(src) # see below
 
 # 2. Parse article (full, plaintext):
@@ -4143,10 +4142,11 @@ def wikipedia(q='', language='en', delay=1, cached=True):
 # article = plaintext(dom, ignore=BIBLIOGRAPHY)
 # print(article)
 
-# 3. Parse summary (= 1st paragraph):
+# 3. Parse bio (= 1st paragraph):
 
-# summary = plaintext(dom('p')[0])
-# print(summary)
+# bio = dom('p:not(.mw-empty-elt)')[0]
+# bio = plaintext(bio)
+# print(bio)
 
 # 4. Parse links:
 
@@ -4848,7 +4848,7 @@ def date(*v, **format):
     if len(v) == 1:
         v = v[0]
     if isinstance(v, datetime.datetime):
-        return Date.combine(v.date(), v.time(), d.tzinfo)
+        return Date.combine(v.date(), v.time(), v.tzinfo)
     if isinstance(v, int):
         return Date.fromtimestamp(v)
     if isinstance(v, float):
@@ -5215,25 +5215,26 @@ class App(ThreadPoolMixIn, WSGIServer):
 #---- APP RELOAD ----------------------------------------------------------------------------------
 
 def autoreload(app):
-    """ Restarts the modified script running the app.
+    """ Restarts the script running the app when modified.
     """
+    f = [ inspect.getouterframes(
+          inspect.currentframe())[2][1], date() ] # caller
+
     @scheduled(1)
-    @static(app=app, t=date(), f=\
-        inspect.getouterframes(
-        inspect.currentframe())[2][1])
     def _():
         try:
-            t = modified(_.f)
-            if _.t > t:
+            t = modified(f[0])
+            if t < f[1]:
                 return
-            _.t = t
-            _.app.shutdown()
-            _.app.server_close()
+            if sys.platform.startswith('win'):
+                return
+            f[1] = t
+            app.shutdown()
+            app.server_close() 
             os.execl(
-                sys.executable, 
-                sys.executable, 
-               *sys.argv
-            )
+                sys.executable,
+                sys.executable,
+               *sys.argv)
         except:
             pass
 
@@ -5746,9 +5747,10 @@ def layout(g, k=100, spring=0.5): # 0.0-1.0
                 dy = y[i] - y[j]
                 d2 = dx * dx + dy * dy
                 if d2 < 100e2:
-                    f1 = 10 / d2       # repulse
-                if g.edge(n[i], n[j]):
-                    f2 = spring / 2.0  # attract
+                    f1 = 10 / d2        # repulse
+                if g.edge(n[i], n[j]) \
+                or g.edge(n[j], n[i]):
+                    f2 = spring / 2.0   # attract
                 x[i] += dx * (f1 - f2)
                 y[i] += dy * (f1 - f2)
                 x[j] -= dx * (f1 - f2)
@@ -5771,8 +5773,8 @@ def zoom(p=[], radius=1.0):
                math.sin(a) * d
 
     p = [polar(x, y) for x, y in p]
-    r = radius * max(d for d, a in p)
-    p = [cartesian(d / r, a) for d, a in p]
+    r = radius / max(d for d, a in p)
+    p = [cartesian(d * r, a) for d, a in p]
     return p
 
 # layout = {
