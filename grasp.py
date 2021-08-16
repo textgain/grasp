@@ -2350,7 +2350,7 @@ class trie(dict):
                 n = n[k]
             n[None] = v
 
-    def search(self, s, sep=lambda ch: not ch.isalpha()):
+    def search(self, s, sep=lambda ch: not ch.isalpha(), etc=None):
         """ Returns an iterator of (i, j, k, v) matches 
             for keys bounded by the separator (or None).
         """
@@ -2359,16 +2359,24 @@ class trie(dict):
         while i < n:
             b = self # branch
             j = i
-            while j < n and s[j] in b:
+            while j < n:
+                if etc and etc in b:
+                    while j < n and not (sep and sep(s[j])):
+                        j += 1
+                    j -= 1
+                    b = {s[j]: b[etc]} # greedy
+                if not s[j] in b:
+                    break
                 b = b[s[j]]
                 j += 1
-                if None not in b:             # leaf?
+                if None not in b: # leaf?
                     continue
-                if sep and not sep(s[i-1:i]): # prev
+                if sep and not sep(s[i-1:i]):
                     continue
-                if sep and not sep(s[j:j+1]): # next
+                if sep and not sep(s[j:j+1]):
                     continue
-                yield Match(i, j, s[i:j], b[None])
+                if i != j:
+                    yield Match(i, j, s[i:j], b[None])
             i += 1
 
 # print(list(trie({'wow': +0.5, 'wtf': -0.5}).search('oh wow!')))
@@ -4847,8 +4855,10 @@ def date(*v, **format):
         return Date.now()
     if len(v) == 1:
         v = v[0]
-    if isinstance(v, datetime.datetime):
+    if isinstance(v, datetime.datetime) and PY3:
         return Date.combine(v.date(), v.time(), v.tzinfo)
+    if isinstance(v, datetime.datetime) and PY2:
+        return Date.combine(v.date(), v.time())
     if isinstance(v, int):
         return Date.fromtimestamp(v)
     if isinstance(v, float):
