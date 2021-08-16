@@ -2369,6 +2369,8 @@ class trie(dict):
                     break
                 b = b[s[j]]
                 j += 1
+                if j == n and etc and etc in b and None in b[etc]:
+                    b = b[etc]
                 if None not in b: # leaf?
                     continue
                 if sep and not sep(s[i-1:i]):
@@ -2380,6 +2382,8 @@ class trie(dict):
             i += 1
 
 # print(list(trie({'wow': +0.5, 'wtf': -0.5}).search('oh wow!')))
+
+# print(list(trie({'cat*': True}).search('catnip cat', etc='*')))
 
 #---- TEXT MARKUP ---------------------------------------------------------------------------------
 

@@ -157,9 +157,9 @@ assert when('day one'                          ) == [u'day one']
 assert when('the day after tomorrow'           ) == [u'the day after tomorrow']
 assert when('the first day of March'           ) == [u'the first day of March']
 
-t = trie({'abc~': 1, 'xyz': 1})
+t = trie({'abc*': 1, 'xyz': 1})
 
-assert len(list(t.search('abcd', etc='~'     ))) == 1
+assert len(list(t.search('abcd', etc='*'     ))) == 1
 assert len(list(t.search('xyz'               ))) == 1
 assert len(list(t.search('xyzz', sep=None    ))) == 1
 assert len(list(t.search('xyzz'              ))) == 0
