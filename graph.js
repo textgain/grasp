@@ -1,48 +1,46 @@
-// graph.js v1.0.
+// graph.js v2.0.
 // (c) Textgain
 
-Math.clamp = function(v, min, max) {
-	return Math.max(min, Math.min(max, v));
+clamp = function(v, min=0.0, max=1.0) {
+	return Math.min(Math.max(v, min), max);
 };
 
 Point = function(x, y) {
-	this.x = x;
-	this.y = y;
+	this.x = isNaN(x) ? Math.random() : x;
+	this.y = isNaN(y) ? Math.random() : y;
 	this.v = { // velocity
 		x: 0,
 		y: 0
-	}
+	};
 };
 
-Point.random = function() {
-	return new Point(
-		Math.random(), 
-		Math.random()
-	);
-};
-
-bounds = function(p) {
-	var x0 = +Infinity;
-	var y0 = +Infinity;
-	var x1 = -Infinity;
-	var y1 = -Infinity;
-	for (var i in p) {
+bounds = function(p=[]) {
+	let x0 = +Infinity;
+	let y0 = +Infinity;
+	let x1 = -Infinity;
+	let y1 = -Infinity;
+	for (let i in p) {
 		x0 = Math.min(x0, p[i].x);
 		y0 = Math.min(y0, p[i].y);
 		x1 = Math.max(x1, p[i].x);
 		y1 = Math.max(y1, p[i].y);
 	}
-	return {x: x0, y: y0, width: x1 - x0, height: y1 - y0};
+	return {
+		x: x0, 
+		y: y0, 
+		w: x1 - x0, 
+		h: y1 - y0
+	};
 };
 
-Graph = function(adj) {
+Graph = function(adj={}) {
 	this.nodes = {};  // {node: Point}
 	this.edges = adj; // {node1: {node2: length}}
 	
-	for (var n1 in this.edges) {
-		for (var n2 in this.edges[n1]) {
-			this.nodes[n1] = Point.random();
-			this.nodes[n2] = Point.random();
+	for (let n1 in this.edges) {
+		for (let n2 in this.edges[n1]) {
+			this.nodes[n1] = new Point();
+			this.nodes[n2] = new Point();
 		}
 	}
 };
@@ -50,104 +48,104 @@ Graph = function(adj) {
 Graph.default = {
 	directed    : false,
 	font        : '10px sans-serif',
-	fill        : '#fff',
-	stroke      : '#000',
-	strokewidth : 0.5,
-	radius      : 4.0,   // node radius
+	fill        : '#fff', // node color
+	stroke      : '#000', // edge color
+	strokewidth : 0.5,    // edge width
+	radius      : 4.0,    // node radius
 	
-	f1          : 10.0,  // force constant (repulsion)
-	f2          : 0.5,   // force constant (attraction)
-	m           : 0.25   // force multiplier
+	f1          : 1.0,    // force constant (repulse)
+	f2          : 1.0,    // force constant (attract)
+	k           : 1.0,    // force constant (low = compact)
+	m           : 1.0     // force dampener (low = smooth)
 };
 
-Graph.default.update = function(obj) {
-	var o = {};
-	for (var k in this) {
-		o[k] = (k in obj)? obj[k] : this[k];
-	}
-	return o;
-};
-	
-Graph.prototype.update = function(options) {
+Graph.prototype.update = function(options={}) {
 	/* Updates node positions using a force-directed layout,
 	 * where nodes repulse nodes (f1) and edges attract (f2).
 	 */
-	var o = Graph.default.update(options || {}); // {f1: 10.0, f2: 0.5, m: 0.25}
-	var n = Object.keys(this.nodes);
-	for (var i=0; i < n.length; i++) {
-		for (var j=i+1; j < n.length; j++) {
+	let o = Object.assign(Graph.default, options);
+	let n = Object.keys(this.nodes);
+	
+	for (let i=0; i < n.length; i++) {
+		for (let j=i+1; j < n.length; j++) {
+			let n1 = n[i];
+			let n2 = n[j];
+			let p1 = this.nodes[n1];
+			let p2 = this.nodes[n2];
+			let dx = p1.x - p2.x;
+			let dy = p1.y - p2.y;
+			let d2 = dx * dx + dy * dy;
+			let d  = d2 ** 0.5; // distance
+			let k  = o.k * 1e+2;
+			let m  = o.m * 1e-1;
+			let f1 = 0;
+			let f2 = 0;
 			
-			var n1 = n[i];
-			var n2 = n[j];
-			var p1 = this.nodes[n1];
-			var p2 = this.nodes[n2];
-			var dx = p1.x - p2.x;
-			var dy = p1.y - p2.y;
-			var d  = dx * dx + dy * dy + 0.1; // squared distance
-			var f;
+			// Repulse nodes (Coulomb's law)
+			if (d < k * 10)
+				f1 = o.f1 * k ** 2 / d2 / 20;
 			
-			// Repulsion (Coulomb's law).
-			f = 0;
-			if (d < 10000) // 100 * 100
-				f = o.f1 * o.f1 / d;
-			p1.v.x += dx * f;
-			p1.v.y += dy * f;
-			p2.v.x -= dx * f;
-			p2.v.y -= dy * f;
+			// Attract nodes (Hooke's law)
+			if ((n1 in this.edges && n2 in this.edges[n1]) ||
+				(n2 in this.edges && n1 in this.edges[n2]))
+				f2 = o.f2 * (d2 - k ** 2) / k / d;
 			
-			// Attraction (Hooke's law).
-			f = 0;
-			if (n1 in this.edges && n2 in this.edges[n1])
-				f = o.f2 * o.f2 / Math.max(0.1, this.edges[n1][n2]); // n1 -> n2
-			if (n2 in this.edges && n1 in this.edges[n2])
-				f = o.f2 * o.f2 / Math.max(0.1, this.edges[n2][n1]); // n1 <- n2
-			p1.v.x -= dx * f;
-			p1.v.y -= dy * f;
-			p2.v.x += dx * f;
-			p2.v.y += dy * f;
+			p1.v.x += dx * (f1 - f2) * m;
+			p1.v.y += dy * (f1 - f2) * m;
+			p2.v.x -= dx * (f1 - f2) * m;
+			p2.v.y -= dy * (f1 - f2) * m;
 		}
 	}
-	for (var n in this.nodes) {
-		var p = this.nodes[n];
-		p.x += Math.clamp(p.v.x * o.m, -10, +10);
-		p.y += Math.clamp(p.v.y * o.m, -10, +10);
+	for (let n in this.nodes) {
+		let p = this.nodes[n];
+		p.x += clamp(p.v.x, -10, +10);
+		p.y += clamp(p.v.y, -10, +10);
 		p.v.x = 0;
 		p.v.y = 0;
 	}
 };
 
-Graph.prototype.render = function(ctx, x, y, options) {
+Graph.prototype.render = function(ctx, x, y, options={}) {
 	/* Draws the graph in the given <canvas> 2D context,
 	 * representing nodes as circles and edges as lines.
 	 */
-	var o = Graph.default.update(options || {});
-	var r = o.radius;
-	var b = bounds(this.nodes);
+	let o = Object.assign(Graph.default, options);
+	let r = o.radius;
+	let b = bounds(this.nodes);
+	
+	ctx.save();
+	ctx.translate(
+		x - b.x - b.w / 2, // center
+		y - b.y - b.h / 2
+	);
 	
 	// Draw edges:
-	ctx.save();
-	ctx.translate(x - b.x - b.width / 2, y - b.y - b.height / 2);
 	ctx.beginPath();
-	for (var n1 in this.edges) {
-		for (var n2 in this.edges[n1]) {
-			var p1 = this.nodes[n1];
-			var p2 = this.nodes[n2];
-			ctx.moveTo(p1.x, p1.y);
-			ctx.lineTo(p2.x, p2.y);
+	let seen = new Set();
+	for (let n1 in this.edges) {
+		for (let n2 in this.edges[n1]) {
+			let p1 = this.nodes[n1];
+			let p2 = this.nodes[n2];
 			
-			// arrowhead
-			if (o.directed) {
-				var a = 3.14 + Math.atan2(p1.x - p2.x, p1.y - p2.y); // angle
-				var x = p2.x - Math.sin(a) * r;
-				var y = p2.y - Math.cos(a) * r;
-				ctx.moveTo(
-					x - (5.0 * Math.sin(a - 0.52)), // 30° = PI/6
-					y - (5.0 * Math.cos(a - 0.52)));
-				ctx.lineTo(x, y);
-				ctx.lineTo(
-					x - (5.0 * Math.sin(a + 0.52)), 
-					y - (5.0 * Math.cos(a + 0.52)));
+			if (!(n1 in this.edges[n2] && seen.has(n2))) {
+				ctx.moveTo(p1.x, p1.y);
+				ctx.lineTo(p2.x, p2.y);
 			}
+			
+			// arrowheads?
+			if (o.directed) {
+				let a  = 3.14 + Math.atan2(p1.x - p2.x, p1.y - p2.y); // direction
+				let x1 = p2.x - Math.sin(a) * r;
+				let y1 = p2.y - Math.cos(a) * r;
+				let x2 = x1 - ( Math.sin(a - 0.5) * 5); // 0.5 ≈ 30°
+				let y2 = y1 - ( Math.cos(a - 0.5) * 5);
+				let x3 = x1 - ( Math.sin(a + 0.5) * 5);
+				let y3 = y1 - ( Math.cos(a + 0.5) * 5);
+				ctx.moveTo(x1, y1);
+				ctx.lineTo(x2, y2);
+				ctx.lineTo(x3, y3);
+			}
+			seen.add(n1);
 		}
 	}
 	ctx.lineWidth = o.strokewidth;
@@ -158,8 +156,8 @@ Graph.prototype.render = function(ctx, x, y, options) {
 
 	// Draw nodes:
 	ctx.beginPath();
-	for (var n in this.nodes) {
-		var p = this.nodes[n];
+	for (let n in this.nodes) {
+		let p = this.nodes[n];
 		ctx.moveTo(p.x + r, p.y);
 		ctx.arc(p.x, p.y, r, 0, 2 * Math.PI);
 	}
@@ -168,11 +166,11 @@ Graph.prototype.render = function(ctx, x, y, options) {
 	ctx.fill();
 	ctx.stroke();
 
-	// Draw node labels:
+	// Draw labels:
 	ctx.font = o.font;
-	for (var n in this.nodes) {
-		var p = this.nodes[n];
-		var s = String(n);
+	for (let n in this.nodes) {
+		let p = this.nodes[n];
+		let s = new String(n);
 		ctx.fillStyle = o.stroke;
 		ctx.fillText(s, p.x + r, p.y - r - 1);
 	}
@@ -185,13 +183,13 @@ Graph.prototype.animate = function(canvas, n, options) {
 	 */
 	function f() {
 		if (n-- > 0) {
-			var w = canvas.width;
-			var h = canvas.height;
-			var c = canvas.getContext('2d');
-			c.clearRect(0, 0, w, h);
+			let w = canvas.width;
+			let h = canvas.height;
+			let g = canvas.getContext('2d');
+			g.clearRect(0, 0, w, h);
 			this.update(options);
 			this.update(options);
-			this.render(c, w/2, h/2, options);
+			this.render(g, w/2, h/2, options);
 			window.requestAnimationFrame(f);
 		}
 	}

@@ -1301,7 +1301,7 @@ def vectorize(s, features=('ch3',)): # (vector)
     v[''] = 1 # bias
     for f in features:
         f = f.lower()
-        n = f[1:]
+        n = f[-1]
         n = int(n)
         if f[0] == '^': # '^1'
             v[f + s[:+n]] = 1
