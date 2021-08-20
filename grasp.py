@@ -5753,7 +5753,7 @@ def difference(A, B):
 def layout(g, iterations=200, k1=1.0, k2=1.0, k=1.0, m=1.0):
     """ Returns a dict with {node: (x, y)} coordinates.
     """
-    n = list(g.nodes)
+    n = list(nodes(g))
     x = list(random.random() for _ in n)
     y = list(random.random() for _ in n)
     v = list([0.0, 0.0]      for _ in n) # velocity
@@ -5763,29 +5763,27 @@ def layout(g, iterations=200, k1=1.0, k2=1.0, k=1.0, m=1.0):
     for _ in range(iterations):
         for i in range(len(n)):
             for j in range(i + 1, len(n)):
-                f1 = 0.0
-                f2 = 0.0
                 dx = x[i] - x[j]
                 dy = y[i] - y[j]
                 d2 = dx ** 2
                 d2+= dy ** 2
                 d  = d2 ** 0.5 # distance
-
-                # Repulse nodes (Coulomb's law)
+                f1 = 0
+                f2 = 0
+                # 1) Repulse nodes (Coulomb's law)
                 if d < k * 10:
-                    f1 = k1 * m * k ** 2 / d2 / 20
-
-                # Attract nodes (Hooke's law)
-                if g.edge(n[i], n[j]) \
-                or g.edge(n[j], n[i]):
-                    f2 = k2 * m * (d2 - k ** 2) / k / d
-
-                dx *= f1 - f2
-                dy *= f1 - f2
-                v[i][0] += dx
-                v[j][0] -= dx
-                v[i][1] += dy
-                v[j][1] -= dy
+                    f1 = k1 * k ** 2 / d2 / 20
+                # 2) Attract nodes (Hooke's law)
+                if n[i] in g and n[j] in g[n[i]] \
+                or n[j] in g and n[i] in g[n[j]]:
+                    f2 = k2 * (d2 - k ** 2) / k / d
+                # 3) Update velocity:
+                vx = dx * (f1 - f2) * m
+                vy = dy * (f1 - f2) * m
+                v[i][0] += vx
+                v[j][0] -= vx
+                v[i][1] += vy
+                v[j][1] -= vy
 
         for i in range(len(n)):
             x[i] += min(max(v[i][0], -10), +10)
