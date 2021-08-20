@@ -5492,8 +5492,11 @@ class Edge(nameddefaulttuple('Edge', ('node1', 'node2', 'weight', 'type'), weigh
 
 class Graph(dict): # { node id1: { node id2: edge }}
 
-    def __init__(self, directed=False):
+    def __init__(self, adjacency={}, directed=False):
         self._directed = directed
+        for n1 in adjacency:
+            for n2 in adjacency[n1]:
+                self.add(n1, n2, adjacency[n1][n2])
 
     @property
     def directed(self):
@@ -5744,36 +5747,54 @@ def difference(A, B):
 #     print(list(g.nodes))
 
 #---- GRAPH VISUALIZATION -------------------------------------------------------------------------
+# The graph visualization algorithm repulses any two nodes (k1) and attracts connected nodes (k2),
+# by a given force (k ≈ size), with a given velocity magnitude (m ≈ speed).
 
-def layout(g, k=100, spring=0.5): # 0.0-1.0
+def layout(g, iterations=200, k1=1.0, k2=1.0, k=1.0, m=1.0):
     """ Returns a dict with {node: (x, y)} coordinates.
     """
     n = list(g.nodes)
     x = list(random.random() for _ in n)
     y = list(random.random() for _ in n)
+    v = list([0.0, 0.0]      for _ in n) # velocity
+    k = k * 1e+2
+    m = m * 1e-1
 
-    for _ in range(k):
+    for _ in range(iterations):
         for i in range(len(n)):
             for j in range(i + 1, len(n)):
-                f1 = 0
-                f2 = 0
+                f1 = 0.0
+                f2 = 0.0
                 dx = x[i] - x[j]
                 dy = y[i] - y[j]
-                d2 = dx * dx + dy * dy
-                if d2 < 100e2:
-                    f1 = 10 / d2        # repulse
+                d2 = dx ** 2
+                d2+= dy ** 2
+                d  = d2 ** 0.5 # distance
+
+                # Repulse nodes (Coulomb's law)
+                if d < k * 10:
+                    f1 = k1 * m * k ** 2 / d2 / 20
+
+                # Attract nodes (Hooke's law)
                 if g.edge(n[i], n[j]) \
                 or g.edge(n[j], n[i]):
-                    f2 = spring / 2.0   # attract
-                x[i] += dx * (f1 - f2)
-                y[i] += dy * (f1 - f2)
-                x[j] -= dx * (f1 - f2)
-                y[j] -= dy * (f1 - f2)
+                    f2 = k2 * m * (d2 - k ** 2) / k / d
+
+                dx *= f1 - f2
+                dy *= f1 - f2
+                v[i][0] += dx
+                v[j][0] -= dx
+                v[i][1] += dy
+                v[j][1] -= dy
+
+        for i in range(len(n)):
+            x[i] += min(max(v[i][0], -10), +10)
+            y[i] += min(max(v[i][1], -10), +10)
+            v[i]  = [0.0, 0.0]
 
     p = zip(x, y)
     p = zip(n, p)
     p = dict(p)
-
     return p
 
 def zoom(p=[], radius=1.0):
@@ -5823,10 +5844,11 @@ def visualize(g, **kwargs):
         '\t\tfill        : %s,' % f('fill', '#fff'),
         '\t\tstroke      : %s,' % f('stroke', '#000'),
         '\t\tstrokewidth : %s,' % f('strokewidth', 0.5),
-        '\t\tradius      : %s,' % f('radius', 4.0),
-        '\t\tf1          : %s,' % f('f1', 10.0),
-        '\t\tf2          : %s,' % f('f2', 0.5),
-        '\t\tm           : %s'  % f('m', 0.25),
+        '\t\tradius      : %s,' % f('radius', 3.0),
+        '\t\tk1          : %s,' % f('k1', 1.0),
+        '\t\tk2          : %s,' % f('k2', 1.0),
+        '\t\tk           : %s'  % f('k', 1.0),
+        '\t\tm           : %s'  % f('m', 1.0),
         '\t});',
         '</script>'
     ))

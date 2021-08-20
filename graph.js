@@ -53,8 +53,8 @@ Graph.default = {
 	strokewidth : 0.5,    // edge width
 	radius      : 4.0,    // node radius
 	
-	f1          : 1.0,    // force constant (repulse)
-	f2          : 1.0,    // force constant (attract)
+	k1          : 1.0,    // force constant (repulse)
+	k2          : 1.0,    // force constant (attract)
 	k           : 1.0,    // force constant (low = compact)
 	m           : 1.0     // force dampener (low = smooth)
 };
@@ -83,12 +83,12 @@ Graph.prototype.update = function(options={}) {
 			
 			// Repulse nodes (Coulomb's law)
 			if (d < k * 10)
-				f1 = o.f1 * k ** 2 / d2 / 20;
+				f1 = o.k1 * k ** 2 / d2 / 20;
 			
 			// Attract nodes (Hooke's law)
 			if ((n1 in this.edges && n2 in this.edges[n1]) ||
 				(n2 in this.edges && n1 in this.edges[n2]))
-				f2 = o.f2 * (d2 - k ** 2) / k / d;
+				f2 = o.k2 * (d2 - k ** 2) / k / d;
 			
 			p1.v.x += dx * (f1 - f2) * m;
 			p1.v.y += dy * (f1 - f2) * m;
@@ -127,7 +127,8 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 			let p1 = this.nodes[n1];
 			let p2 = this.nodes[n2];
 			
-			if (!(n1 in this.edges[n2] && seen.has(n2))) {
+			if (!(n2 in this.edges && 
+				  n1 in this.edges[n2] && seen.has(n2))) {
 				ctx.moveTo(p1.x, p1.y);
 				ctx.lineTo(p2.x, p2.y);
 			}
