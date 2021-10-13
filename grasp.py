@@ -339,8 +339,8 @@ class PersistentDict(dict):
         self.path = path
 
     @atomic # (thread-safe)
-    def save(self):
-        json.dump(self, open(self.path, 'w')) # JSON
+    def save(self, path=''):
+        json.dump(self, open(path or self.path, 'w')) # JSON
 
 # db = PersistentDict('db.json', {'k': 'v'})
 # db.save()
@@ -499,7 +499,7 @@ def flatten(a, type=list):
             q.append(v)
     return q
 
-# print(flatten([1, [2, [3, 4]]]))
+# print(flatten([1, [2, [3, 4]]]))  
 
 def choices(a, weights=[], k=1):
     """ Returns random elements from the given list,
@@ -1034,7 +1034,7 @@ def reduce(v, features=set()):
     """
     return {f: w for f, w in v.items() if f not in features}
 
-def sparse(v, cutoff=0.00001):
+def sparse(v, cutoff=0.0):
     """ Returns a vector with non-zero weight features.
     """
     return {f: w for f, w in v.items() if w > cutoff}
@@ -1052,9 +1052,15 @@ def onehot(v): # {'age': '25+'} => {('age', '25+'): 1}
 def scale(v, x=0.0, y=1.0):
     """ Returns a vector with normalized weights (between x and y).
     """
-    a = min(v.values())
-    b = max(v.values())
-    return {f: float(w - a) / (b - a or 1) * (y - x) + x for f, w in v.items()}
+    if not isinstance(v, dict):
+        v = list(v)
+        w = list(v.values() for v in v if v)
+        w = list(itertools.chain(*w)) or [0]
+        a = min(w)
+        b = max(w)
+        return [{f: float(v[f] - a) / (b - a or 1) * (y - x) + x for f in v} for v in v]
+    else:
+        return scale((v,), x, y)[0]
 
 def unit(v):
     """ Returns a vector with normalized weights (length 1).
@@ -1076,16 +1082,15 @@ def tf(v):
     return {f: w / n for f, w in v.items()}
 
 def tfidf(vectors=[]):
-    """ Returns an iterator of vectors with normalized weights
+    """ Returns an list of vectors with normalized weights
         (term frequency–inverse document frequency).
     """
-    df = collections.Counter() # stopwords have higher df (I, the, or, ...)
+    df = collections.Counter() # stopwords have higher df (a, at, ...)
     if not isinstance(vectors, list):
         vectors = list(vectors)
     for v in vectors:
         df.update(v)
-    for v in vectors:
-        yield {f: w / float(df[f] or 1) for f, w in v.items()}
+    return [{f: v[f] / float(df[f] or 1) for f in v} for v in vectors]
 
 def features(vectors=[]):
     """ Returns the set of features for all vectors.
@@ -1296,7 +1301,8 @@ def vectorize(s, features=('ch3',)): # (vector)
     """ Returns a dict of character trigrams in the given string.
         Can be used for Perceptron.train(v(s)) or .predict(v(s)).
     """
-  # s = tokenize(s).lower()
+  # s = tokenize(s)
+  # s = s.lower()
     v = collections.Counter()
     v[''] = 1 # bias
     for f in features:
@@ -1425,6 +1431,9 @@ def fsel(data=[]): # (feature selection, using chi2)
 # Some algorithms (Perceptron & Naive Bayes) use online learning,
 # meaning that they can be trained on-the-fly.
 
+# Some algorithms (Percetron, Naive Bayes, Decision Tree) do not 
+# use feature weights (they just use 1) but others do (SGD, KNN).
+
 class Model(object):
 
     def __init__(self, examples=[], **kwargs):
@@ -1442,7 +1451,14 @@ class Model(object):
     # Model.test() returns (precision, recall) for given test set:
 
     def test(self, data=[], target=None):
-        return test(self, target, data)
+        if target is None:
+            p = (test(self, label, data) for label in self.labels)
+            p = zip(*p)
+            p = map(avg, p) # macro-average
+            p = tuple(p)
+            return p
+        else:
+            return test(self, target, data)
 
     # Model.save() writes a serialized JSON string to a file-like.
     # Model.load() deserializes it and returns the right subclass.
@@ -1616,6 +1632,53 @@ NN = NeuralNetwork = Perceptron
 # 
 # p.save(open('model.json', 'w'))
 # p = Perceptron.load(open('model.json'))
+
+#---- STOCHASTIC GRADIENT DESCENT -----------------------------------------------------------------
+# The Stochastic Gradient Descent model is similar to Perceptron, but uses feature weights.
+# The labels must be 0 or 1.
+
+class StochasticGradientDescent(Model):
+
+    def __init__(self, examples=[], n=10, rate=0.01):
+        """ Stochastic Gradient Descent learning algorithm.
+        """
+        self.labels  = collections.defaultdict(int)
+        self.weights = collections.defaultdict(float)
+        self.rate    = rate # learning rate
+
+        for _ in range(n):
+            for v, label in shuffled(examples):
+                self.train(v, label)
+
+    def train(self, v, label=None):
+        assert label in (0, 1)
+        self.labels[label] += 1
+
+        w = self.weights
+        p = self.predict(v)
+        e = self.rate * (label - top(p)[0])
+        for f in v:
+            w[f] += e * v[f]
+        w[''] += e # bias
+
+    def predict(self, v):
+        """ Returns a dict of (label, probability)-items.
+        """
+        for f in v:
+            print(f, f in self.weights)
+        p = self.weights[''] + sum(
+            self.weights[f ] * v[f] for f in v)
+        p = {0: -p, 1: +p}
+        p = softmax(p)
+        return p
+
+    @classmethod
+    def _decode(cls, m):
+        m['labels'] = {int(k): v for k, v in m['labels'].items()}
+        m = Model._decode(m)
+        return m
+
+SGD = StochasticGradientDescent
 
 #---- NAIVE BAYES ---------------------------------------------------------------------------------
 # The Naive Bayes model is a simple alternative for Perceptron (it trains very fast).
@@ -2323,6 +2386,19 @@ class Classifier(object):
         """
         return kfoldcv(self.model.__class__, self.vectorized(), k=k, **kwargs)
 
+# class Toxicity(Classifier):
+#     def data(self):
+#         return (('fools', 1), ('kittens', 0))
+#     def v(self, s):
+#         return vec(s, features=('ch3', 'w1'))
+#     def __call__(self, s):
+#         return int(super().__call__(s)[0]) > 0
+# 
+# toxic = Toxicity('toxicity.json', model=NN)
+# 
+# print(toxic('foolish'))
+# print(toxic('kitteh'))
+
 ##### NLP #########################################################################################
 
 #---- TEXT SEARCH ---------------------------------------------------------------------------------
@@ -2361,7 +2437,7 @@ class trie(dict):
             j = i
             while j < n:
                 if etc and etc in b:
-                    while j < n and not (sep and sep(s[j])):
+                    while j < n and not (sep and sep(s[j])): # lookahead
                         j += 1
                     j -= 1
                     b = {s[j]: b[etc]} # greedy
@@ -2387,7 +2463,7 @@ class trie(dict):
 
 #---- TEXT MARKUP ---------------------------------------------------------------------------------
 
-def mark(s, matches=[], format=concat, tag=('<mark class="{}">', '</mark>')):
+def mark(s, matches=[], format=lambda w: ' '.join(w), tag=('<mark class="{}">', '</mark>')):
     """ Returns a HTML string with <mark> tags for matches.
     """
     m1 = collections.defaultdict(set)
@@ -2508,6 +2584,11 @@ def sep(s):
     s = s.replace(';  )', ';)')
     s = s.replace(':  )', ':)')
     s = s.replace(':  (', ':(')
+    s = s.replace(' : /', ':/')
+    s = s.replace('www . ', 'www.')
+    s = s.replace(' . com', '.com')
+    s = s.replace(' . net', '.net')
+    s = s.replace(' . org', '.org')
     s = s.split()
     s = ' '.join(s)
     return s
@@ -2555,11 +2636,14 @@ def destress(s, replace={}):
      u'ø' : 'o' ,
      u'“' : '"' ,
      u'”' : '"' ,
+     u'„' : '"' ,
      u'‘' : "'" ,
      u'’' : "'" ,
      u'⁄' : '/' ,
      u'¿' : '?' ,
-     u'¡' : '!'}.items():
+     u'¡' : '!' ,
+     u'«' : '<<',
+     u'»' : '>>'}.items():
         s = s.replace(k, v)
     f = unicodedata.combining             # f('´') == 0
     s = unicodedata.normalize('NFKD', s)  # é => e + ´
@@ -3090,10 +3174,12 @@ TAG = {
 }
 
 inflections = {
-    'aux'  : r"can|shall|will|may|must|could|should|would|might|'ll|'d",
-    'be'   : r"be|am|are|is|was|were|being|been|'m|'re|'s",
-    'have' : r"have|has|had|having|'ve",
-    'do'   : r"do|does|did|doing"
+    'en': {
+        'aux'  : r"can|shall|will|may|must|could|should|would|might|'ll|'d",
+        'be'   : r"be|am|are|is|was|were|being|been|'m|'re|'s",
+        'have' : r"have|has|had|having|'ve",
+        'do'   : r"do|does|did|doing"
+    }
 }
 
 class Phrase(Tagged):
@@ -3103,7 +3189,7 @@ class Phrase(Tagged):
 
 _RE_TAG = '|'.join(map(re.escape, TAG)) # NAME|NOUN|\:\)|...
 
-def chunk(pattern, text, replace=[]):
+def chunk(pattern, text, replace=[], language='en'):
     """ Returns an iterator of matching Phrase objects in the given tagged text.
         The search pattern is a sequence of tokens (laugh-, -ing), tags (VERB), 
         token/tags (-ing/VERB), escaped characters (:\)) or control characters: 
@@ -3132,7 +3218,7 @@ def chunk(pattern, text, replace=[]):
             continue
         for k, v in replace:
             w = w.replace(k.upper(), v)
-        for k, v in inflections.items():
+        for k, v in inflections.get(language, {}).items():
             w = w.replace(k.upper(), v)                     # 'BE' => 'be|am|are|is'
 
         try:
@@ -3203,7 +3289,7 @@ def constituents(text, language='en'):
     while s:
         for tag, p in P:
             try:
-                m = next(chunk('^(%s)' % p, s))[0]; break
+                m = next(chunk('^(%s)' % p, s, language=language))[0]; break
             except StopIteration:
                 m = ''
         if not m:
@@ -3404,6 +3490,11 @@ class Embedding(collections.OrderedDict):
         q = heapq.nlargest(n, q)
         q = [(w, v) for w, v in q if w > 0]
         return q
+
+    def vec(self, s):
+        """ Returns a vector for the given word or sentence.
+        """
+        return centroid(self[w] for w in s.split() if w in self)
 
     def save(self, f, format='json'):
 
@@ -5671,7 +5762,6 @@ class Graph(dict): # { node id1: { node id2: edge }}
                   e.findtext('*[@key="type"]') or None
             )
         return g
-
 
 #---- GRAPH CONNECTIVITY --------------------------------------------------------------------------
 
