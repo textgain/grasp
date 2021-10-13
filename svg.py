@@ -2,7 +2,7 @@
 
 ##### SVG.PY ######################################################################################
 
-__version__   =  '1.1'
+__version__   =  '1.2'
 __license__   =  ''
 __credits__   = ['Tom De Smedt', 'Guy De Pauw']
 __email__     =  'info@textgain.com'
@@ -114,9 +114,40 @@ def zoom(points=[], radius=1.0):
     """
     p = [polar(x, y) for x, y in points]
     r = radius / max(d for d, a in p)
-    p = [(d * r, a) for d, a in p]
-    p = [coordinates(0, 0, d, a) for d, a in p]
+    p = [coordinates(0, 0, d * r, a) for d, a in p]
     return p
+
+def bounds(points=[]):
+    """ Returns the polygon's bounding rectangle (x, y, w, h).
+    """
+    x0 = float('+inf')
+    y0 = float('+inf')
+    x1 = float('-inf')
+    y1 = float('-inf')
+    for x, y in points:
+        x0 = min(x0, x)
+        y0 = min(y0, y)
+        x1 = max(x1, x)
+        y1 = max(y1, y)
+    return x0, y0, x1 - x0, y1 - y0
+
+def pip(x, y, points=[]):
+    """ Returns True if the point is inside the polygon.
+    """
+    # ray casting
+    odd = False
+    n = len(points)
+    for i in range(n):
+        j = (i + 1) % n
+        x0 = points[i][0]
+        y0 = points[i][1]
+        x1 = points[j][0]
+        y1 = points[j][1]
+        if (y0 < y and y1 >= y) \
+        or (y1 < y and y0 >= y):
+            if x0 + (y-y0) / (y1-y0) * (x1-x0) < x:
+                odd = not odd
+    return odd
 
 #---- ITERATION -----------------------------------------------------------------------------------
 
