@@ -91,7 +91,7 @@ PY2 = sys.version.startswith('2')
 PY3 = sys.version.startswith('3')
 
 if PY3:
-    str, unicode, basestring = bytes, str, str
+    unicode, basestring = str, str
 
 if PY3:
     import collections.abc
@@ -418,7 +418,8 @@ def debug(file=sys.stdout, format=SIGNED, date='%Y-%m-%d %H:%M:%S'):
 def u(v, encoding='utf-8'):
     """ Returns the given value as a Unicode string.
     """
-    if isinstance(v, str):
+    if PY3 and isinstance(v, bytes) or \
+       PY2 and isinstance(v, str):
         for e in ((encoding,), ('windows-1252',), ('utf-8', 'ignore')):
             try:
                 return v.decode(*e)
@@ -439,7 +440,9 @@ def b(v, encoding='utf-8'):
             except:
                 pass
         return v
-    if isinstance(v, str):
+    if PY3 and isinstance(v, bytes):
+        return v
+    if PY2 and isinstance(v, str):
         return v
     return (u'%s' % v).encode()
 
@@ -1664,8 +1667,6 @@ class StochasticGradientDescent(Model):
     def predict(self, v):
         """ Returns a dict of (label, probability)-items.
         """
-        for f in v:
-            print(f, f in self.weights)
         p = self.weights[''] + sum(
             self.weights[f ] * v[f] for f in v)
         p = {0: -p, 1: +p}
@@ -2012,6 +2013,8 @@ def confusion_matrix(model, test=[]):
         guess, p = top(model.predict(v))
         m[label][guess] += 1
     return m
+
+cf = confusion_matrix
 
 def errors(model, test=[]):
     """ Returns an iterator of incorrect (vector, label, predicted).
@@ -3519,6 +3522,7 @@ class Embedding(collections.OrderedDict):
 
         if format == 'txt':      # GloVe
             for s in f:          # word1 0.0 0.0 0.0 ...
+                s = u(s)
                 s = s.split(' ') # word2 0.0 0.0 0.0 ...
                 w = s[0]
                 v = s[1:]
@@ -3860,7 +3864,7 @@ def sniff(url, *args, **kwargs):
 
 #---- SEARCH --------------------------------------------------------------------------------------
 # The Google Search API grants 100 free requests per day.
-# The Faroo Search API grants 1M free requests per month.
+# The Bing Search API grants 1,000 free requests per month.
 
 # For unlimited (=paid) Google Search, Translate, Vision,
 # you need to use your own API key with a payment method:
@@ -3868,7 +3872,7 @@ def sniff(url, *args, **kwargs):
 
 keys = {
     'Google' : 'AIzaSyCqy-sxq6gZGAKxsoSfDHvjHgaW-M__T94',
-    'Faroo'  : '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
+    'Bing'   : '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
 }
 
 Result = collections.namedtuple('Result', ('url', 'text'))
@@ -3896,26 +3900,30 @@ def google(q, page=1, language='en', delay=1, cached=False, key=None):
                 r['htmlSnippet']
             )
 
-def faroo(q, page=1, language='en', delay=1, cached=False, key=None):
-    """ Returns an iterator of (url, description)-tuples from Faroo.
+def bing(q, page=1, language='en', delay=1, cached=False, key=None):
+    """ Returns an iterator of (url, description)-tuples from Bing.
     """
     if 0 < page <= 10:
         k = {
-            'x-rapidapi-host' : 'faroo-faroo-web-search.p.rapidapi.com',
-            'x-rapidapi-key'  : '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
+            'x-bingapis-sdk'  : 'true',
+            'x-rapidapi-host' : 'bing-web-search1.p.rapidapi.com',
+            'x-rapidapi-key'  : (key or keys['Bing']),
         }
-        r  = 'https://faroo-faroo-web-search.p.rapidapi.com/api' # https://rapidapi.com
+        r  = 'https://bing-web-search1.p.rapidapi.com/search' # https://rapidapi.com
         r += '?q=%s'
-        r += '&start=%s'
-        r += '&length=10'
-        r %= (urllib.parse.quote(b(q)), 1 + 10 * (page - 1))
+        r += '&setLang=%s'
+        r += '&offset=%s'
+        r += '&count=10'
+        r %= (
+            urllib.parse.quote(b(q)),
+            urllib.parse.quote(b(language)), 0 + 10 * (page - 1))
         r = download(r, headers=k, delay=delay, cached=cached)
         r = json.loads(u(r))
 
-        for r in r['results']:
+        for r in r['webPages']['value']:
             yield Result(
                 r['url'],
-                r['kwic']
+                r['snippet']
             )
 
 def search(q, engine='google', page=1, language='en', delay=1, cached=False, key=None):
