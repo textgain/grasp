@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.1'
+__version__   =  '2.2'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -52,10 +52,12 @@ import sys
 import os
 import io
 import re
+import platform
 import inspect
 import logging
 import traceback
 import threading
+import subprocess
 import multiprocessing
 import multiprocessing.pool
 import itertools
@@ -86,6 +88,8 @@ import random
 import math
 import heapq
 import bisect
+
+OS  = platform.system()
 
 PY2 = sys.version.startswith('2')
 PY3 = sys.version.startswith('3')
@@ -1327,22 +1331,29 @@ def vectorize(s, features=('ch3',)): # (vector)
 
 v = vec = vectorize
 
-def style(s, bins=[0.01 * i for i in range(25+1)]): # (1% to 25%)
+def style(s, bins=[0.01 * i for i in range(0, 10)] +
+                  [0.10 * i for i in range(1, 10)]):
     """ Returns a dict of stylistic features in the given string 
         (word length, sentence length, capitalization, shouting).
     """
-    v = collections.Counter()
+    v = {}
     for f, w in (
-      ('+', r'[\w](?=\w{5})'),  # word length
-      ('_', r'[\s]+'        ),  # words
-      ('.', r'[.!?]+'       ),  # sentences
-      ('^', r'[A-Z]'        ),  # uppercase
-      ('!', r'[!]{2}'       )): # shouting
-        i = len(re.findall(w, s))
-        j = len(s) * 1.0 or 1.0
-        r = i / j
-        for p in bins:
-            v['%s>%i%%' % (f, p * 100)] = int(r > p) # +1-3%
+      ('+', u'😄|😅|😂|👍|❤️'),
+      ('-', u'🙄|😢|😭|😡|💔'),
+      ('~', r'[\w](?=\w{5})'  ),  # word length
+      ('_', r'[\s]+'          ),  # words
+      ('.', r'[.!?]+'         ),  # sentences
+      ('^', r'[A-Z]'          ),  # uppercase
+      (':', r'[-=:;,/%"()]'   ),  # punctuation
+      ('!', r'[!]{2}'         )): # shouting
+        a = re.findall(w, s)
+        i = len(a)
+        j = len(s) or 1
+        j = float(j)
+        w = i / j
+        for b in bins:
+            if w >= b:
+                v['%s %.2f' % (f, b)] = 1
     return v
 
 # data = []
@@ -1358,6 +1369,17 @@ def style(s, bins=[0.01 * i for i in range(25+1)]): # (1% to 25%)
 
 #---- FEATURE SELECTION ---------------------------------------------------------------------------
 # Feature selection identifies the best features, by evaluating their statistical significance.
+
+def fc(data=[]):
+    """ Returns a {feature: {label: count}} dict 
+        for the given list of (vector, label)-tuples.
+    """
+    p = collections.defaultdict(
+        collections.Counter)
+    for v, label in data:
+        for f in v:
+            p[f][label] += 1
+    return p
 
 def pp(data=[]): # (posterior probability)
     """ Returns a {feature: {label: frequency}} dict 
@@ -1908,7 +1930,7 @@ def rules(tree):
 DT = DecisionTree
 
 #---- DECISION TREE ENSEMBLE -----------------------------------------------------------------------
-# Multiple decision trees with majority vote consensus correct overfitting errors (lower variance).
+# The Decision Tree Ensemble has multiple decision trees with majority vote, to correct overfitting.
 
 class DecisionTreeEnsemble(Model):
 
@@ -1952,6 +1974,8 @@ class DecisionTreeEnsemble(Model):
         return m
 
 RF = RandomForest = DecisionTreeEnsemble
+
+# To predict from a mixed ensemble, use: centroid((m.predict(v) for m in models))
 
 #---- RANDOM BASELINE -----------------------------------------------------------------------------
 # The Random Baseline model can be used to compare a real model's performance to.
@@ -2404,6 +2428,42 @@ class Classifier(object):
 
 ##### NLP #########################################################################################
 
+#---- TEXT GENERATION -----------------------------------------------------------------------------
+# The cfg() function (Context-Free Grammar) recursively replaces placeholders in a string.
+# The replacements are chosen from a list of (placeholder) strings, generating variations.
+
+def cfg(s, rules={}, placeholder=r'@(\w+)', format=lambda s: s):
+    """ Returns an iterator of strings with replaced placeholders.
+    """
+    def closure(s):
+        def replace(m):
+            try:
+                s = m.group(1)
+                s = rules[s]
+                s = random.choice(s)
+                s = closure(s)
+            except:
+                s = m.group(0) # missing rule?
+            return s
+        return re.sub(placeholder, replace, s)
+
+    while 1:
+        yield format(closure(s))
+
+# print(next(cfg('The cat is @hungry!', 
+#     rules={
+#         'very': (
+#             'extremely'    ,
+#             'immensely'    ,
+#         ),
+#         'hungry': (
+#             'ravenous'     ,
+#             'starving'     ,
+#             '@very hungry' ,
+#         ),
+#     }
+# )))
+
 #---- TEXT SEARCH ---------------------------------------------------------------------------------
 # The trie() function maps a dict of strings (i.e., a lexicon) to a tree of chars, for fast search.
 
@@ -2564,6 +2624,25 @@ def anon(s):
     return s
 
 # print(anon('@Textgain (https://www.textgain.com)'))
+
+def collapse(s, separator=' '):
+    """ Returns the string with collapsed whitespace.
+    """
+    s = s.strip()
+    s = s.split()
+    s = separator.join(s)
+    return s
+
+# print(collapse('wow\n  nice '))
+
+def cap(s):
+    """ Returns the string with capitalized sentences.
+    """
+    s = re.split(r'([.!?]\s+)', s)
+    s = ''.join(s[:1].upper() + s[1:] for s in s)
+    return s
+
+# print(cap('wow! nice.'))
 
 def sep(s):
     """ Returns the string with separated punctuation marks.
@@ -2747,8 +2826,8 @@ language = lang
 EMOJI = {
     u'😊', u'☺️', u'😉', u'😌', u'😏', u'😎', u'😍', u'😘', u'😴', u'😀', u'😃', u'😄', u'😅', 
     u'😇', u'😂', u'😭', u'😢', u'😱', u'😳', u'😜', u'😛', u'😁', u'😐', u'😕', u'😧', u'😦', 
-    u'😒', u'😞', u'😔', u'😫', u'😩', u'😠', u'😡', u'🙊', u'🙈', u'💔', u'❤️', u'💕', u'♥', 
-    u'👌', u'✌️', u'👍', u'🙏'
+    u'😒', u'😞', u'😔', u'😫', u'😩', u'😠', u'😡', u'🙊', u'🙈', u'💔', u'❤️', u'💕', u'♥' , 
+    u'👌', u'☝️', u'✌️', u'👍', u'💪', u'👊', u'👏', u'🙌', u'🙏', u'🤦', u'🤷‍♂', u'🤷', u'🌈', 
 }
 
 EMOTICON = {
@@ -4001,7 +4080,7 @@ def annotate(path, delay=1, key=None):
 setattr(google, 'annotate', annotate)
 
 # with tmp(download('http://goo.gl/5GTvTe')) as f:
-#     print(google.annotate(f.name))
+#     print(google.annotate(f.name, key='***'))
 
 #---- TWITTER -------------------------------------------------------------------------------------
 # Using u(), oauth(), request() and stream() we can define a Twitter class.
@@ -4225,10 +4304,10 @@ BIBLIOGRAPHY = {
     'h2 < #notes ~ *'    ,
 }
 
-def wikipedia(q='', language='en', delay=1, cached=True):
-    """ Returns the HTML source of the given Wikipedia article (or '').
+def mediawiki(domain, q='', language='en', delay=1, cached=True):
+    """ Returns the HTML source of the given MediaWiki page (or '').
     """
-    r  = 'https://%s.wikipedia.org/w/api.php' % language
+    r  = 'https://%s.%s.org/w/api.php' % (language, domain)
     r += '?action=parse'
     r += '&format=json'
     r += '&redirects=1'
@@ -4242,6 +4321,16 @@ def wikipedia(q='', language='en', delay=1, cached=True):
             u(r['parse']['text']['*']))
     except KeyError:
         return u''
+
+def wikipedia(*args, **kwargs):
+    """ Returns the HTML source of the given Wikipedia article.
+    """
+    return mediawiki('wikipedia', *args, **kwargs)
+
+def wiktionary(*args, **kwargs):
+    """ Returns the HTML source of the given Wiktionary article.
+    """
+    return mediawiki('wiktionary', *args, **kwargs)
 
 # 1. Parse HTML source
 
@@ -4613,7 +4702,7 @@ def selector(element, s):
 
     for s in s.split(','):                                      # div, a
         e = [element]
-        for s in re.split(r' (?![^\[]*\])', s):                 # div a[class="x y"]
+        for s in re.split(r' (?![^\[\(]*[\]\)])', s):           # div a[class="x y"]
 
             try:
                 combinator, tag, a, pseudo = \
@@ -4679,10 +4768,9 @@ def selector(element, s):
 
 # dom = DOM(download('https://www.textgain.com'))
 # 
-# print(dom('#nav > h1 b')[0].html)
-# print(dom('meta[name="description"]')[0].content)
+# print(dom('nav a')[0].html)
 # print(dom('a[href^="https"]:first-child'))
-# print(dom('a[href^="https"]:contains("love")'))
+# print(dom('a:contains("open source")'))
 
 #---- PLAINTEXT -----------------------------------------------------------------------------------
 # The plaintext() function traverses a DOM HTML element, strips all tags while keeping Text data.
@@ -4800,7 +4888,7 @@ def decode(s):
     return s
 
 def docx(path):
-    """ Returns the given Word-file (.docx) as a plain text string.
+    """ Returns the given .docx file as a plain text string.
     """
     x = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
     f = zipfile.ZipFile(path)
@@ -4812,6 +4900,20 @@ def docx(path):
             s += e.text
         s = s.rstrip()
         s = s + '\n\n'
+    return s
+
+def pdf(path, encoding='UTF-8', cmd=cd('etc', 'pdftotext')):
+    """ Returns the given .pdf file as a plain text string.
+    """
+    if OS == 'Linux':
+        p = cmd + '-linux'
+    if OS == 'Darwin':
+        p = cmd + '-mac'
+    if OS == 'Windows':
+        p = cmd + '-win.exe'
+
+    s = subprocess.check_output((p, '-enc', encoding, path, '-'))
+    s = u(s)
     return s
 
 #---- NEWS ----------------------------------------------------------------------------------------
