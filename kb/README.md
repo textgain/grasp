@@ -17,9 +17,9 @@ Essential geographical data about world **countries** and **states**:
 | 6   | lang    | country language(s): _en_, _de_, _fr_               |
 | 6   | flag    | country flag: 🇬🇧, 🇩🇪, 🇫🇷                           |
 
-## en-nom.csv
+## en-per.csv
 
-Essential demographical data about **names** of people: <sup>[1](https://www.heise.de/ct/ftp/07/17/182/)</sup>
+Essential demographical data about **names** of persons: <sup>[1](https://www.heise.de/ct/ftp/07/17/182/)</sup>
 
 |  #  | FIELD   | DESCRIPTION                                         |
 | :-: | :------ | :-------------------------------------------------- |

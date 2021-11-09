@@ -2432,23 +2432,27 @@ class Classifier(object):
 # The cfg() function (Context-Free Grammar) recursively replaces placeholders in a string.
 # The replacements are chosen from a list of (placeholder) strings, generating variations.
 
-def cfg(s, rules={}, placeholder=r'@(\w+)', format=lambda s: s):
+def cfg(s, rules={}, placeholder=r'@(\w+)', format=lambda s: s, depth=10):
     """ Returns an iterator of strings with replaced placeholders.
     """
-    def closure(s):
+    def closure(s, n):
         def replace(m):
             try:
                 s = m.group(1)
                 s = rules[s]
                 s = random.choice(s)
-                s = closure(s)
+                s = u(s)
+                s = closure(s, n-1)
             except:
-                s = m.group(0) # missing rule?
+                s = m.group(0)
             return s
-        return re.sub(placeholder, replace, s)
+        if n <= 0:
+            return s
+        else:
+            return re.sub(placeholder, replace, s)
 
     while 1:
-        yield format(closure(s))
+        yield format(closure(s, depth))
 
 # print(next(cfg('The cat is @hungry!', 
 #     rules={
