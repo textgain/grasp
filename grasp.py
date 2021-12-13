@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.2'
+__version__   =  '2.3'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -11,7 +11,7 @@ __copyright__ =  'Textgain'
 
 ###################################################################################################
 
-# Copyright (c) 2016, Textgain BVBA
+# Copyright (c) 2016, Textgain
 # All rights reserved.
 # 
 # Redistribution and use in source and binary forms, with or without modification, 
@@ -174,6 +174,23 @@ def static(**kwargs):
 # def uid():
 #     uid.i += 1
 #     return uid.i
+
+#---- CACHED --------------------------------------------------------------------------------------
+
+def cached(f):
+    """ The @cached() decorator stores function return values.
+    """
+    v = {}
+    def decorator(*args, **kwargs):
+        k = repr((args, kwargs))
+        if not k in v:
+            v[k] = f(*args, **kwargs)
+        return v[k]
+    return decorator
+
+# @cached
+# def fib(n):
+#     return n if n < 2 else fib(n-1) + fib(n-2)
 
 #---- PARALLEL ------------------------------------------------------------------------------------
 # Parallel processing uses multiple CPU's to execute multiple processes simultaneously.
@@ -4217,6 +4234,17 @@ class Twitter(object):
             if id == 0:
                 return
 
+    def fetch(self, q, delay=1, cached=False, key=None, raw=False):
+        """ Returns the tweet with the given id.
+        """
+        r = 'https://api.twitter.com/1.1/statuses/show.json', {
+            'stringify_ids' : True,
+            'id'            : q
+        }
+        r = self.request(*r + (key, delay, cached)) # 900 / 15min
+        r = self.tweet(r) if not raw else r
+        return r
+
     def retweets(self, q, delay=15, cached=False, key=None):
         """ Returns an iterator of usernames that retweeted the tweet with the given id.
         """
@@ -4227,7 +4255,6 @@ class Twitter(object):
         }
         r = self.request(*r + (key, delay, cached)) # 75 / 15min
         r = r.get('ids', [])
-
         return r
 
     def trends(self, q='', delay=15, cached=False, key=None):
@@ -4272,10 +4299,14 @@ woeid = {
     'DE' : 23424829,
     'ES' : 23424950,
     'FR' : 23424819,
+    'IT' : 23424853,
     'NL' : 23424909,
+    'PL' : 23424923,
+    'PT' : 23424925,
     'RU' : 23424936,
+    'SE' : 23424954,
     'UK' : 23424975,
-    'US' : 23424977
+    'US' : 23424977,
 }
 
 # for tweet in twitter('cats', language='en'):
@@ -4291,6 +4322,8 @@ woeid = {
 #     print(v['in_reply_to_status_id'], twitter.tweet(v))
 
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
+
+# https://www.mediawiki.org/wiki/API:Parsing_wikitext
 
 BIBLIOGRAPHY = {
     'style'              ,
@@ -4308,23 +4341,24 @@ BIBLIOGRAPHY = {
     'h2 < #notes ~ *'    ,
 }
 
-def mediawiki(domain, q='', language='en', delay=1, cached=True):
+def mediawiki(domain, q='', language='en', delay=1, cached=True, raw=False, **kwargs):
     """ Returns the HTML source of the given MediaWiki page (or '').
     """
     r  = 'https://%s.%s.org/w/api.php' % (language, domain)
     r += '?action=parse'
     r += '&format=json'
     r += '&redirects=1'
+    r += '&prop=%s' % kwargs.get('prop', 'text')
     r += '&page=%s' % urllib.parse.quote(q)
     r  = download(r, delay=delay, cached=cached)
     r  = json.loads(u(r))
 
-    try:
+    if raw:
+        return r['parse'] # for props
+    else:
         return u'<h1>%s</h1>\n%s' % (
-            u(r['parse']['title']),
-            u(r['parse']['text']['*']))
-    except KeyError:
-        return u''
+             u(r['parse']['title']),
+             u(r['parse']['text']['*']))
 
 def wikipedia(*args, **kwargs):
     """ Returns the HTML source of the given Wikipedia article.
@@ -5263,7 +5297,7 @@ WSGIServer = wsgiref.simple_server.WSGIServer
 
 class App(ThreadPoolMixIn, WSGIServer):
 
-    def __init__(self, host='127.0.0.1', port=8080, root=None, threads=10, debug=False):
+    def __init__(self, host='127.0.0.1', port=8080, root=None, session=HOUR, threads=10, debug=False):
         """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
         """
         WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
@@ -5273,6 +5307,7 @@ class App(ThreadPoolMixIn, WSGIServer):
         self.router   = Router(static=root)
         self.request  = HTTPRequest()
         self.response = HTTPResponse()
+        self.state    = HTTPState(self, expires=session)
         self.generic  = generic
         self.debug    = debug
 
@@ -5338,11 +5373,14 @@ class App(ThreadPoolMixIn, WSGIServer):
             q1 = env.get('QUERY_STRING'  ) # GET 
             q2 = env.get('wsgi.input'    ) # POST
 
-            if h1.startswith('multipart'):
+            if h1.startswith('multipart') is True:
                 q2 = cgi.FieldStorage(q2, environ=env)
-                q2 = {k: [q2[k]] for k in q2}
-            else: # application/x-www-form-urlencoded
+            if h1.startswith('multipart') is False:
                 q2 = q2.read(int(h2 or 0))
+            if h1.startswith('application/json'):
+                q2 = json.loads(q2)
+            if hasattr(q2, 'keys'): # FieldStorage?
+                q2 = {k: [q2[k]] for k in q2}
             if isinstance(q1, bytes):
                 q1 = u(q1)
             if isinstance(q2, bytes):
@@ -5456,6 +5494,94 @@ def autoreload(app):
                *sys.argv)
         except:
             pass
+
+#---- APP SESSION ---------------------------------------------------------------------------------
+
+class Cookie(dict):
+
+    def __init__(self, s='', **kwargs):
+        """ Returns the cookie string as a dict.
+        """
+        def parse(s):
+            for s in s.split(';'):
+                s = s.split('=') 
+                s = s + ['']
+                k = s[0].strip()
+                v = s[1].strip()
+                if k:
+                    yield k, v
+        if isinstance(s, basestring):
+            s = parse(s)
+        self.update(s)
+        self.update(kwargs)
+
+    def __str__(self):
+        return ';'.join('%s=%s' % (k, v) if v != '' else k for k, v in self.items())
+
+class HTTPState(dict):
+
+    def __init__(self, app, expires=HOUR):
+        """ HTTP state management, through cookies.
+        """
+        self.app     = app
+        self.expires = expires
+        self.checked = 0
+
+    def __call__(self):
+        """ Returns a dict for the current session.
+        """
+        t = time.time()
+        if -self.checked + t > self.expires * 0.1:
+            self.checked = t
+            self.expire()
+        try:
+            k = self.app.request.headers['Cookie']
+            k = Cookie(k)
+            k = k['id']
+        except:
+            k = hashlib.sha256(b(t)).hexdigest()
+
+        # Update session expiry:
+        self[k] = v = t, self.get(k, [{}])[-1]
+        # Update session cookie:
+        self.app.response.headers['Set-Cookie'] = \
+                 'id=%s;' % str(k) + \
+            'Max-Age=%s;' % self.expires
+
+        return v[1]
+
+    def expire(self, t=0.0):
+        for k in list(self):
+            if self.get(k, [t])[0] + self.expires <= t:
+                self.pop(k, None)
+
+# App.request.session loads App.state() lazily.
+# App.request.session is local to every thread.
+# App.session hot links to App.request.session:
+
+def _lazy_state(r):
+    try:
+        v = r._state
+    except:
+        v = r._state = r.app.state()
+    return v
+
+HTTPRequest.session = \
+    property(_lazy_state)
+
+App.session = \
+    property(lambda self: self.request.session)
+
+# app = App()
+# 
+# @app.route('/')
+# def index(*path, **query):
+#     p = app.session
+#     print(p)
+#     if 'pw' not in p:
+#         p['pw'] = 123
+# 
+# app.run()
 
 ##### NET #########################################################################################
 
