@@ -5533,19 +5533,19 @@ class HTTPState(dict):
         t = time.time()
         if -self.checked + t > self.expires * 0.1:
             self.checked = t
-            self.expire()
+            self.expire(t)
         try:
             k = self.app.request.headers['Cookie']
             k = Cookie(k)
-            k = k['id']
+            k = k['session'] # id
         except:
-            k = hashlib.sha256(b(t)).hexdigest()
+            k = binascii.hexlify(os.urandom(32))
 
         # Update session expiry:
         self[k] = v = t, self.get(k, [{}])[-1]
         # Update session cookie:
         self.app.response.headers['Set-Cookie'] = \
-                 'id=%s;' % str(k) + \
+            'session=%s;' % str(k) + \
             'Max-Age=%s;' % self.expires
 
         return v[1]
