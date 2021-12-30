@@ -5563,7 +5563,7 @@ def _lazy_state(r):
     try:
         v = r._state
     except:
-        v = r._state = r.app.state()
+        v = r._state = r.app and r.app.state() or {}
     return v
 
 HTTPRequest.session = \
