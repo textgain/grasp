@@ -990,10 +990,11 @@ def peaks(a, z=1):
     """
     a = list(a)
     m = avg(a)
-    s = sd(a)
-    a = ((v - m) / s for v in a)
-    a = [i for i, v in enumerate(a) if v > z]
-    return a
+    s = sd(a) or 1
+    p = ((v - m) / s for v in a)
+    p = (i for i, v in enumerate(p) if v > z)
+    p = sorted(p, key=lambda i: -a[i])
+    return p
 
 # print(peaks([0, 0, 0, 10, 100, 1, 0], z=1))
 
@@ -3975,7 +3976,7 @@ keys = {
     'Bing'   : '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
 }
 
-Result = collections.namedtuple('Result', ('url', 'text'))
+Result = collections.namedtuple('Result', ('url', 'text', 'date'))
 
 def google(q, page=1, language='en', delay=1, cached=False, key=None):
     """ Returns an iterator of (url, description)-tuples from Google.
@@ -3994,10 +3995,11 @@ def google(q, page=1, language='en', delay=1, cached=False, key=None):
         r = download(r, delay=delay, cached=cached)
         r = json.loads(u(r))
 
-        for r in r['items']:
+        for r in r.get('items', ()):
             yield Result(
                 r['link'],
-                r['htmlSnippet']
+                r['snippet'],
+                ''
             )
 
 def bing(q, page=1, language='en', delay=1, cached=False, key=None):
@@ -4020,10 +4022,11 @@ def bing(q, page=1, language='en', delay=1, cached=False, key=None):
         r = download(r, headers=k, delay=delay, cached=cached)
         r = json.loads(u(r))
 
-        for r in r['webPages']['value']:
+        for r in r.get('webPages', {}).get('value', ()):
             yield Result(
                 r['url'],
-                r['snippet']
+                r['snippet'],
+                r['dateLastCrawled']
             )
 
 def search(q, engine='google', page=1, language='en', delay=1, cached=False, key=None):
@@ -5806,6 +5809,7 @@ class Edge(nameddefaulttuple('Edge', ('node1', 'node2', 'weight', 'type'), weigh
     __sub__ = __rsub__ = lambda e, x: x - e.weight
     __mul__ = __rmul__ = lambda e, x: x * e.weight
     __div__ = __rdiv__ = lambda e, x: x / e.weight
+    __float__          = lambda e   :     e.weight
 
 # e = Edge('Garfield', 'cat', weight=1.0, type='is-a')
 # 
@@ -5883,7 +5887,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
         return len(self.incident(n))
 
     def copy(self):
-        g = Graph(self._directed)
+        g = Graph({}, self.directed)
         g.update(self)
         return g
 
@@ -5901,7 +5905,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
             self.setdefault(n1, {})
             self.setdefault(n2, {})
             self[n1][n2] = e = Edge(n1, n2, float(weight), type)
-        if n2 != None and not self._directed:
+        if n2 != None and not self.directed:
             self[n2][n1] = e
 
     def pop(self, n1, n2=None, default=None):
@@ -5911,14 +5915,14 @@ class Graph(dict): # { node id1: { node id2: edge }}
             v = dict.pop(self, n1, default) # n1 -> ...
         if n2 != None:
             v = self.get(n1, {}).pop(n2, default)
-        if n2 != None and not self._directed:
+        if n2 != None and not self.directed:
             v = self.get(n2, {}).pop(n1, default)
         return v
 
     def sub(self, nodes=[]):
         """ Returns a graph with the given nodes, and connecting edges.
         """
-        g = Graph(self._directed)
+        g = Graph({}, self.directed)
         for n in self.nodes:
             if n in nodes:
                 g.add(n)
@@ -5932,7 +5936,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
             nodes connected to this node (depth=1), 
             nodes connected to these nodes (depth=2), ...
         """
-        g = Graph(self._directed)
+        g = Graph({}, self.directed)
         g.add(n)
         for _ in range(depth):
             for e in [e for e in self.edges if not e in g and e.node1 in g or e.node2 in g]:
@@ -5970,7 +5974,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
         s += '\n<key for="node" id="label" attr.name="label" attr.type="string"/>'
         s += '\n<key for="edge" id="weight" attr.name="weight" attr.type="double"/>'
         s += '\n<key for="edge" id="type" attr.name="type" attr.type="string"/>'
-        s += '\n<graph edgedefault="%sdirected">'   % ('un', '')[self._directed]
+        s += '\n<graph edgedefault="%sdirected">'   % ('un', '')[self.directed]
         for n in self.nodes:
             s += '\n<node id="%s">'                 % escape(n)
             s += '\n\t<data key="label">%s</data>'  % escape(n)
@@ -6023,7 +6027,7 @@ def prune(g, degree=1, weight=None):
 def union(A, B):
     """ Returns a graph with nodes that are in A or B.
     """
-    g = Graph(A.directed) # A | B
+    g = Graph({}, A.directed) # A | B
     g.update(A)
     g.update(B)
     return g
@@ -6031,7 +6035,7 @@ def union(A, B):
 def intersection(A, B):
     """ Returns a graph with nodes that are in A and B.
     """
-    g = Graph(A.directed) # A & B
+    g = Graph({}, A.directed) # A & B
     for n in A.nodes:
         if n in B is True:
             g.add(n)
@@ -6043,7 +6047,7 @@ def intersection(A, B):
 def difference(A, B):
     """ Returns a graph with nodes that are in A but not in B.
     """
-    g = Graph(A.directed) # A - B
+    g = Graph({}, A.directed) # A - B
     for n in A.nodes:
         if n in B is False:
             g.add(n)
