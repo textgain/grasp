@@ -4428,7 +4428,8 @@ def rss(xml):
             u(e.findtext('title'            , '')),
             u(e.findtext('pubDate'          , '')),
             u(t.findtext('channel/language' , '')).split('-')[0],
-            u(e.findtext('author'           , ''))
+            u(e.findtext('author'           , 
+              e.findtext('source'           , '')))
         )
 
 def atom(xml, ns='http://www.w3.org/2005/Atom'):
