@@ -1524,7 +1524,7 @@ class Model(object):
     def _encode(cls, model):
         """ Returns the given Model as a dict.
         """
-        return dict(model.__dict__, **{'class': model.__class__.__name__})
+        return dict(vars(model), **{'class': model.__class__.__name__})
 
     @classmethod
     def _decode(cls, dict):
@@ -2126,8 +2126,10 @@ def kfoldcv(Model, data=[], k=10, weighted=False, debug=False, **kwargs):
             R.append((recall, n))
 
             if debug:
-                # k 1 P 0.99 R 0.99 spam
-                print('k %i' % (i+1), 'P %.2f' % precision, 'R %.2f' % recall, label)
+                # k 1 P 99.9 R 99.9 spam
+                print('k %i' % (i + 1), 
+                    'P %.1f' % (100 * precision), 
+                    'R %.1f' % (100 * recall), label)
 
     return wavg(P), wavg(R)
 
@@ -2450,7 +2452,7 @@ class Classifier(object):
 # The cfg() function (Context-Free Grammar) recursively replaces placeholders in a string.
 # The replacements are chosen from a list of (placeholder) strings, generating variations.
 
-def cfg(s, rules={}, placeholder=r'@(\w+)', format=lambda s: s, depth=10):
+def cfg(s, rules={}, placeholder=r'@([\w+]+)', format=lambda s: s, depth=10):
     """ Returns an iterator of strings with replaced placeholders.
     """
     def closure(s, n):
@@ -4954,7 +4956,7 @@ def pdf(path, encoding='UTF-8', cmd=cd('etc', 'pdftotext')):
     if OS == 'Windows':
         p = cmd + '-win.exe'
 
-    s = subprocess.check_output((p, '-enc', encoding, path, '-'))
+    s = subprocess.check_output((p, '-q', '-enc', encoding, path, '-'))
     s = u(s)
     return s
 
@@ -5082,11 +5084,13 @@ class Date(datetime.datetime):
     def __int__(self):
         return self.timestamp
 
-    def __add__(self, i):
-        return date(datetime.datetime.__add__(self, datetime.timedelta(seconds=i)))
+    def __add__(self, t):
+        return date(datetime.datetime.__add__(self, 
+                    datetime.timedelta(seconds=t) if type(t) in (int, float) else t))
 
-    def __sub__(self, i):
-        return date(datetime.datetime.__sub__(self, datetime.timedelta(seconds=i)))
+    def __sub__(self, t):
+        return date(datetime.datetime.__sub__(self, 
+                    datetime.timedelta(seconds=t) if type(t) in (int, float) else t))
 
     def __repr__(self):
         return "Date(%s)" % repr(self.__str__())
@@ -5700,7 +5704,7 @@ def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
         which is the amount of indirect incoming links to a node.
     """
     n = nodes(g)
-    v = dict.fromkeys(n, 1.0 / len(n))
+    v = dict.fromkeys(n, 1.0 / (len(n) or 1))
     for i in range(iterations):                            #       A -> B -> C
         p = v.copy() # prior pagerank                      #      0.3  0.3  0.3
         for n1 in v:                                       # i=0  0.3  0.6  0.6
@@ -5714,7 +5718,7 @@ def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
 
         # Converged?
         e = sum(abs(v[n] - p[n]) for n in v)
-        if e < epsilon * len(n):
+        if e <= epsilon * len(n):
             break
 
     return v
