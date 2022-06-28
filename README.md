@@ -60,7 +60,7 @@ Once this app is up, go check [http://127.0.0.1:8080/app?q=cat](http://127.0.0.1
 
 ## Tools for Natural Language Processing
 
-**Find language** with `lang(str)` for 40+ languages and ~92% accuracy:
+**Find language** with `lang(str)` for 40+ languages and ~92.5% accuracy:
 
 ```py
 print(lang('The cat sat on the mat.')) # en
@@ -79,7 +79,7 @@ print(pov(tok('Nice!', language='en'))) # +0.6
 print(pov(tok('Dumb.', language='en'))) # -0.4
 ```
 
-* For de, en, fr, nl, with ~72% accuracy.
+* For de, en, es, fr, nl, with ~75% accuracy.
 * You'll need the language models in [grasp/lm](https://github.com/textgain/grasp/tree/master/lm).
 
 **Find word types** with `tag(str)` in 10+ languages using robust ML models from [UD](https://universaldependencies.org):
@@ -90,7 +90,7 @@ for word, pos in tag(tok('The cat sat on the mat.'), language='en'):
 ```
 
 * Parts-of-speech include `NOUN`, `VERB`, `ADJ`, `ADV`, `DET`, `PRON`, `PREP`, ...
-* For ar, da, de, en, es, fr, it, nl, no, pl, pt, ru, sv, tr, with ~96% accuracy.
+* For ar, da, de, en, es, fr, it, nl, no, pl, pt, ru, sv, tr, with ~95% accuracy.
 * You'll need the language models in [grasp/lm](https://github.com/textgain/grasp/tree/master/lm).
 
 

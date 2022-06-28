@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.3'
+__version__   =  '2.4'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -2740,6 +2740,7 @@ def destress(s, replace={}):
      u'ł' : 'l' ,
      u'Ø' : 'O' ,
      u'ø' : 'o' ,
+     u'i̇' : 'i' ,
      u'“' : '"' ,
      u'”' : '"' ,
      u'„' : '"' ,
@@ -3462,6 +3463,7 @@ kw = keywords
 
 negation = {
     'en': { 'no', 'not', "n't",            },
+    'es': { 'no', 'nunca',                 },
     'de': { 'kein', 'keine', 'nicht'       },
     'fr': { 'aucun', 'aucune', 'ne', 'pas' },
     'nl': { 'geen', 'niet', 'nooit'        },
@@ -3469,6 +3471,7 @@ negation = {
 
 intensifiers = {
     'en': { 'very', 'really', 'big'        },
+    'es': { 'muy', 'mucho',                },
     'de': { 'sehr',                        },
     'fr': {u'très', 'vraiment',            },
     'nl': { 'echt', 'erg', 'heel', 'zeer'  },
