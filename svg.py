@@ -2,8 +2,8 @@
 
 ##### SVG.PY ######################################################################################
 
-__version__   =  '1.2'
-__license__   =  ''
+__version__   =  '1.3'
+__license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw']
 __email__     =  'info@textgain.com'
 __author__    =  'Textgain'
@@ -11,17 +11,46 @@ __copyright__ =  'Textgain'
 
 ###################################################################################################
 
+# Copyright (c) 2016, Textgain
+# All rights reserved.
+# 
+# Redistribution and use in source and binary forms, with or without modification, 
+# are permitted provided that the following conditions are met:
+# 
+# 1. Redistributions of source code must retain the above copyright notice, 
+#    this list of conditions and the following disclaimer.
+# 
+# 2. Redistributions in binary form must reproduce the above copyright notice, 
+#    this list of conditions and the following disclaimer in the documentation and/or 
+#    other materials provided with the distribution.
+# 
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR 
+# IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND 
+# FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR 
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL 
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+# DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, 
+# WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY 
+# WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+###################################################################################################
+
+# svg.py is a pure-Python SVG renderer with functions for 2D drawing (e.g., colored lines & shapes),
+# geometry (e.g., distance, angle, tangent, bounds) and transformation (e.g., rotate, scale).
+
 import sys
 import inspect
 import colorsys
 import codecs
 import unicodedata
+import re
 import hashlib
 import mimetypes
 import base64
 import struct
 import random; _random=random
 import math
+import operator
 
 PY2 = sys.version.startswith('2')
 
@@ -35,6 +64,14 @@ def data_uri(path, default='application/octet-stream'):
     s = base64.b64encode(s)
     s = s.decode('utf-8')
     s = 'data:%s;base64,%s' % (type, s)
+    return s
+
+def sha(s):
+    """ Returns the crypytographic hash of the string.
+    """
+    s = s.encode('utf-8')
+    s = hashlib.sha256(s)
+    s = s.hexdigest()
     return s
 
 #---- GEOMETRY ------------------------------------------------------------------------------------
@@ -190,35 +227,56 @@ def relative(a):
 #---- NUMBERS -------------------------------------------------------------------------------------
 # The number formatting functions are useful for chart visualizations.
 
-class short(str):
+if not PY2:
+    unicode = str
+
+class short(unicode):
     """ Returns the given number as a short string.
     """
     # short(1234) => 1.2K
     def __new__(cls, v, precision=1, format=None):
+        if isinstance(v, (str, unicode)) and v.isdigit():
+            v = int(v)
+        if isinstance(v, (str, unicode)):
+            v = float(v)
         if v >= 1000 or type(v) is float:
             f = '%.*f'.replace('*', str(precision))
         else:
             f = '%i'
-        if v <  1000:
+        if v <  1e+3:
             n = 1, ''
-        if v <= 1 and v >= 0 and format == '%': # 0.1 => 10.0%
-            n = 1e-2, '%'
-        if v >= 1e+3 - 1e+2:
+        if v >= 1e+3:
             n = 1e+3, 'K'
-        if v >= 1e+6 - 1e+5:
+        if v >= 1e+6 - 2e+5:
             n = 1e+6, 'M'
-        if v >= 1e+9 - 1e+8:
+        if v >= 1e+9 - 2e+8:
             n = 1e+9, 'B'
+        if format == '%':
+            n = 1e-2, '%'
+        if format == '*':
+            n = 1, u'○○○'
+        if format == '*' and v >= 1e+1:
+            n = 1, u'●○○'
+        if format == '*' and v >= 1e+2:
+            n = 1, u'●●○'
+        if format == '*' and v >= 1e+3:
+            n = 1, u'●●●'
 
         s = v / n[0]
         s = f % s
+        s = s if format != '*' else ''
+        s = s + '.'
+        s = s.split('.')
+        s = s[0], s[1].rstrip('0')
+        s = '.'.join(s)
+        s = s.rstrip('.')
         s = s + n[1]
-        s = str.__new__(cls, s)  # '1.1K'
-        s.v = v                  #  1100
-        s.n = n[0]               #  1000.0
-        s.u = n[1]               # 'K'
-        s.p = precision          #  1
-        s.f = format             #  None
+        s = unicode.__new__(cls, s)  # '1.1K'
+        s.v = v                      #  1100
+        s.n = n[0]                   #  1000.0
+        s.u = n[1]                   # 'K'
+        s.p = precision              #  1
+        s.f = format                 #  None
         return s
 
     def __add__(self, v):
@@ -233,19 +291,24 @@ class short(str):
     def __float__(self):
         return self.v * self.n
 
+def rate(v, precision=0):
+    return short(v, precision, format='%')
+
+def rank(v, precision=0):
+    return short(v, precision, format='*')
+
 def ceil(v, m=1.0):
     """ Returns the upper rounded float,
         by order of magnitude.
     """
-    # ceil(123, 1.0) => 200
-    # ceil(123, 0.5) => 150
-    v = v / m
+    # ceil(12 , 1.0) => 20  (10 , 20 , ... )
+    # ceil(123, 1.0) => 200 (100, 200, ... )
+    # ceil(1.3, 0.7) => 1.4 (0.7, 1.4, ... )
+    # ceil(0.3, 0.2) => 0.4 (0.2, 0.4, ... )
     n = abs(v) or 1
     n = math.log10(n)
-    v = math.pow(.1, int(n)) * v
-    v = math.ceil(v)
-    v = math.pow(10, int(n)) * v
-    v = v * m
+    n = math.pow(10, int(n)) * m
+    v = math.ceil(v / n) * n
     return v
 
 def floor(v, m=1.0):
@@ -253,14 +316,33 @@ def floor(v, m=1.0):
         by order of magnitude.
     """
     # floor(123, 1.0) => 100
-    v = v / m
     n = abs(v) or 1
     n = math.log10(n)
-    v = math.pow(.1, int(n)) * v
-    v = math.floor(v)
-    v = math.pow(10, int(n)) * v
-    v = v * m
+    n = math.pow(10, int(n)) * m
+    v = math.floor(v / n) * n
     return v
+
+def circa(v, step=0.05, ease=True):
+    """ Returns the nearest round float.
+    """
+    # circa(0.03) => 0.03
+    # circa(0.04) => 0.04
+    # circa(0.06) => 0.05
+    # circa(0.07) => 0.05
+    # circa(0.08) => 0.10
+    # circa(0.09) => 0.10
+    n = math.log10(step)
+    n = min(n, 0)
+    n = abs(n)
+    n = int(n) + 1
+    v = float(v)
+    if ease and v <= step:
+        return round(v, n)
+    else:
+        return round(
+               round(v / step) * step, n + 1)
+
+ca = circa
 
 def format(v):
     """ Returns a number string format,
@@ -268,11 +350,11 @@ def format(v):
     """
     if type(v) is short:
         return '%s'
-    if float(v).is_integer():
+    if abs(v) > 2 and float(v).is_integer():
         return '%.0f'
     if abs(v) > 100:
         return '%.0f' # 0, 100, 200, ...
-    if abs(v) > 2.0:
+    if abs(v) > 2:
         return '%.1f' # 0, 0.1, 0.2, ...
     else:
         return '%.2f'
@@ -282,7 +364,7 @@ def steps(v1, v2):
     """
     r = abs(v2 - v1)
     r = str(r).strip('0.')
-    r = int(r)
+    r = int(r or 0)
 
     if r == 1:
         return 5
@@ -318,10 +400,11 @@ def peaks(a, z=1):
     """
     a = list(a)
     m = avg(a)
-    s = sd(a)
-    a = ((v - m) / s for v in a)
-    a = [i for i, v in enumerate(a) if v > z]
-    return a
+    s = sd(a) or 1
+    p = ((v - m) / s for v in a)
+    p = (i for i, v in enumerate(p) if v > z)
+    p = sorted(p, key=lambda i: -a[i])
+    return p
 
 # print(peaks([0, 0, 0, 10, 100, 1, 0], z=1))
 
@@ -329,6 +412,11 @@ def peaks(a, z=1):
 # The Color object represents shape fill and stroke (outline) colors in terms of R, G, B, A values.
 # The Color object can also be created with H, S, B values (i.e., hue, saturation, brightness), and
 # rotated on the RYB color wheel (painter's model) to find aesthetical color combinations.
+
+ops = {
+    '+': operator.add,
+    '*': operator.mul,
+}
 
 RGB = 'rgb'
 HSB = 'hsb'
@@ -424,7 +512,7 @@ class Color(object):
         return Color(h, s, b, a, mode=HSB)
 
     def __str__(self):
-        return 'rgba(%i, %i, %i, %.2f)' % (
+        return 'rgba(%.0f, %.0f, %.0f, %.2f)' % (
             self.r * 255, 
             self.g * 255, 
             self.b * 255,
@@ -454,18 +542,33 @@ def luminance(clr):
     """
     return clr.r * 0.3 + clr.g * 0.6 + clr.b * 0.1 # Y
 
+def darker(clr, t=0.1):
+    """ Returns the color mixed with black.
+    """
+    return Color(*(mix(t, clr, BLACK).rgb) + (clr.a,))
+
+def lighter(clr, t=0.1):
+    """ Returns the color mixed with white.
+    """
+    return Color(*(mix(t, clr, WHITE).rgb) + (clr.a,))
+
 def complement(clr):
     """ Returns the complementary color.
     """
     return clr.rotate(180)
 
-def adjust(clr, h=0.0, s=0.0, b=0.0, a=0.0):
+def adjust(clr, h=None, s=None, b=None, a=None, op='+'):
     """ Returns the adjusted color.
     """
-    return Color(*(clamp(v1 + v2) for v1, v2 in zip(clr.hsba, (h, s, b, a))), mode=HSB)
+    if op == '+':
+        hsba = (0.0 if v is None else v for v in (h, s, b, a))
+    if op == '*':
+        hsba = (1.0 if v is None else v for v in (h, s, b, a))
+
+    return Color(*(clamp(ops.get(op)(v1, v2)) for v1, v2 in zip(clr.hsba, hsba)), mode=HSB)
 
 def mix(t, clr1, clr2, **k):
-    """ Returns an interpolated color between the given colors at t (0.0-1.0).
+    """ Returns the interpolated color between the given colors at t (0.0-1.0).
     """
     return Color(*((1 - t) * v1 + v2 * t for v1, v2 in zip(clr1, clr2)), **k)
 
@@ -565,11 +668,12 @@ FONTS = {
 def textsize(s, fontname, fontsize, fontweight='normal'):
     """ Returns the approximate (width, height) of the given string.
     """
-    fontsize = int(fontsize) # 10.5 => '11px'
+    fontsize = round(fontsize) # 9.9 => '10px'
 
     if isinstance(s, u''.__class__):
+        b = s
         f = unicodedata.combining
-        b = unicodedata.normalize('NFKD', s) # 'touché' => 'touche´'
+        b = unicodedata.normalize('NFKD', b) # 'touché' => 'touche´'
         b = ''.join(c for c in b if not f(c))
         b = b.replace(u'“', '"')
         b = b.replace(u'”', '"')
@@ -583,10 +687,12 @@ def textsize(s, fontname, fontsize, fontweight='normal'):
 
     b = b.replace('\n', ' ')
 
-    m = FONTS[fontname, fontweight]
-    w = fontsize * 0.01 * sum(m[CHARS.get(ch, -1)] for ch in b) + \
-        fontsize * 1.00 * sum(1 for e in EMOJI if e in s)
-    h = fontsize
+    m  = FONTS[fontname, fontweight]
+    w  = fontsize * 0.01 * sum(m[CHARS.get(ch, -1)] for ch in b) + \
+         fontsize * 1.00 * sum(1 for e in EMOJI if e in s) - \
+         fontsize * 0.15 * s.count(u' ') # NARROW NO-BREAK SPACE
+    h  = fontsize
+
     return w, h
 
 # print(textsize(u'touché 😁', 'Arial', 10))
@@ -596,14 +702,16 @@ def truncate(s, width, font, fontsize, fontweight='normal', placeholder='...'):
     """
     f = lambda s: textsize(s, font, fontsize, fontweight)[0] > width
 
+    if f(s):
+        s = s + placeholder
     while s != placeholder and f(s):
         s = s[:-len(placeholder)]
         s = s[:-1]
         s = s + placeholder
-    if not f(s):
-        return s
-    else:
+    if f(s):
         return ''
+    else:
+        return s
 
 # print truncate('supercalifragilisticexpialidocious', 100, 'Arial', 12)
 
@@ -771,7 +879,7 @@ class BezierPath(list):
                 return
 
     def __repr__(self):
-        return 'BezierPath(length=%i)' % self.length
+        return 'BezierPath(length=%.0f)' % self.length
 
 Path = BezierPath
 
@@ -820,15 +928,83 @@ def fit(points=[], k=0.5):
 
     return p
 
+#---- FILTER  -------------------------------------------------------------------------------------
+
+class Filter(str):
+    def __new__(cls, s):
+        return str.__new__(cls, 
+            '<filter color-interpolation-filters="sRGB">\n%s\n</filter>' % s.strip())
+
+class blur(Filter):
+    def __new__(cls, radius=10):
+        """ Returns a filter that renders the element with a blur.
+        """
+        return Filter.__new__(cls,
+            '<feGaussianBlur stdDeviation="%.2f" />' % radius)
+
+class dropshadow(Filter):
+    def __new__(cls, dx=10, dy=10, radius=10):
+        """ Returns a filter that renders the element with a blurred shadow.
+        """
+        return Filter.__new__(cls,
+            '<feDropShadow stdDeviation="%.2f" dx="%.1f" dy="%.1f" />' % (radius, dx, dy))
+
+class colorize(Filter):
+    def __new__(cls, h=0.0, s=1.0, b=1.0, contrast=1.0):
+        """ Returns a filter that adjusts the element's colors.
+        """
+        b = -contrast * 0.5 + 0.5, \
+             contrast * b
+        return Filter.__new__(cls, '\n'.join((
+            '<feColorMatrix type="hueRotate" values="%.2f" />' % (h * 360),
+            '<feColorMatrix type="saturate" values="%.2f" />' % s,
+            '<feComponentTransfer>',
+            '<feFuncR type="linear" intercept="%.2f" slope="%.2f" />' % b,
+            '<feFuncG type="linear" intercept="%.2f" slope="%.2f" />' % b,
+            '<feFuncB type="linear" intercept="%.2f" slope="%.2f" />' % b,
+            '</feComponentTransfer>')))
+
+class blend(Filter):
+    def __new__(cls, clr, mode='color'):
+        """ Returns a filter that adjusts the element's color (monotone).
+        """
+        a = clr.a
+        r = clr.r * a
+        g = clr.g * a
+        b = clr.b * a
+        d = 1 - a # identity
+        m = r + d, r, r, 0, 0, g, g + d, g, 0, 0, b, b, b + d, 0, 0, 0, 0, 0, 1, 0
+        m = ' '.join('%.2f' % v for v in m)
+        return Filter.__new__(cls, 
+            '<feColorMatrix type="matrix" values="%s" />' % m)
+
+def desaturate(k=1.0):
+    """ Returns a filter that renders the element in grayscale.
+    """
+    return colorize(s=clamp(1 - k))
+
+def filters(*f):
+    """ Returns a filter chain.
+    """
+    s = ''.join(f)
+    s = re.sub(r'<filter.*?>', '', s)
+    s = re.sub(r'</filter>', '', s)
+    s = re.sub(r'\n+', '\n', s)
+    s = s.strip()
+    s = Filter(s)
+    return s
+
+# text('hi!', 0, 0, filter=dropshadow())
+
 #---- CONTEXT -------------------------------------------------------------------------------------
 
 WIDTH   = 1000.0
 HEIGHT  = 1000.0 
 
-LEFT    = 0
-RIGHT   = 1
-CENTER  = 2
-JUSTIFY = 3
+LEFT    = 'left'
+RIGHT   = 'right'
+CENTER  = 'center'
+JUSTIFY = 'justify'
 
 NORMAL  = 'normal'
 BOLD    = 'bold'
@@ -838,15 +1014,16 @@ NONZERO = 'nonzero'
 EVENODD = 'evenodd'
 
 attributes = {
-    'id'          : ('id'               , '%s'  ),
-    'type'        : ('class'            , '%s'  ),
-    'fill'        : ('fill'             , '%s'  ),
-    'stroke'      : ('stroke'           , '%s'  ),
-    'strokewidth' : ('stroke-width'     , '%.1f'),
-    'strokestyle' : ('stroke-dasharray' , '%s'  ),
-    'font'        : ('font-family'      , '%s'  ),
-    'fontsize'    : ('font-size'        , '%ipx'),
-    'fontweight'  : ('font-weight'      , '%s'  ),
+    'id'          : ('id'               , '%s'      ),
+    'type'        : ('class'            , '%s'      ),
+    'fill'        : ('fill'             , '%s'      ),
+    'stroke'      : ('stroke'           , '%s'      ),
+    'strokewidth' : ('stroke-width'     , '%.1f'    ),
+    'strokestyle' : ('stroke-dasharray' , '%s'      ),
+    'font'        : ('font-family'      , '%s'      ),
+    'fontsize'    : ('font-size'        , '%.0fpx'  ),
+    'fontweight'  : ('font-weight'      , '%s'      ),
+    'filter'      : ('filter'           , 'url(#%s)'),
 }
 
 def serialize(**attrs):
@@ -868,16 +1045,26 @@ def serialize(**attrs):
 
 # print(serialize(font='Arial', fontsize=100, fill=Color(0)))
 
-def mixin(s, **attrs):
+def mixin(s, ctx=None, **attrs):
     """ Returns the XML element with the attributes mixed in.
     """
+    if attrs.get('filter') and ctx is not None:
+        f = attrs['filter']
+        k = sha(f)[:16]
+        k = 'filter-' + k
+        f = mixin(f, id=k)  # '<filter id="x">'
+        ctx._defs[k] = f
+        attrs['filter'] = k # 'filter="url(#x)"'
+
     if attrs:
         i = s.find('>')
         i = i - 1 if i > 0 and s[i-1] == '/' else i # '/>'
         i = i - 1 if i > 0 and s[i-1] == ' ' else i
         s = '%s %s%s' % (s[:i], serialize(**attrs), s[i:])
+
     if attrs.get('link'):
         s = '<a href="%s">%s</a>' % (encode(attrs['link']), s)
+
     return s
 
 # print(mixin("<text>blah</text>", fontsize=100, link='...'))
@@ -898,9 +1085,10 @@ XML = '<?xml version="1.0" encoding="utf-8"?>'
 
 class Context(list):
 
-    def __init__(self, width=WIDTH, height=HEIGHT, _global=False):
+    def __init__(self, width=WIDTH, height=HEIGHT, info='', _global=False):
         self.width   = width
         self.height  = height
+        self.info    = info
         self._global =_global
         self._defs   = {}
         self._stack  = [[]] # push/pop
@@ -1001,21 +1189,21 @@ class Context(list):
         """ Draws a line from x1, y1 to x2, y2: line(0, 0, 100, 100, stroke=color(0)).
         """
         s = '<line x1="%.1f" y1="%.1f" x2="%.1f" y2="%.1f" />' % (x1, y1, x2, y2)
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append(s)
 
     def rect(self, x, y, w, h, roundness=0, **k):
         """ Draws a rectangle at x, y with width w and height h.
         """
         s = '<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" rx="%.1f" />' % (x, y, w, h, roundness)
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append(s)
 
     def ellipse(self, x, y, w, h, **k):
         """ Draws an ellipse at x, y with width w and height h.
         """
         s = '<ellipse cx="%.1f" cy="%.1f" rx="%.1f" ry="%.1f" />' % (x, y, w * 0.5, h * 0.5)
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append(s)
 
     def arc(self, x, y, r, a1, a2, close=True, **k):
@@ -1029,7 +1217,7 @@ class Context(list):
         f = ('0', '1')[a2 - a1 >= 180]
         c = ('M', 'L')[close]
         s = '<path d="M %.1f %.1f A %.1f %.1f 0 %s 0 %.1f %.1f %s %.1f %.1f Z" />' % (x1, y1, r, r, f, x2, y2, c, x, y)
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append(s)
 
     def beginpath(self, x, y):
@@ -1056,7 +1244,7 @@ class Context(list):
 
     def drawpath(self, path, winding=NONZERO, **k):
         s = '<path d="%s" fill-rule="%s" />' % (' '.join(map(str, path)), winding)
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append(s)
 
     def findpath(self, points=[], curvature=0.5):
@@ -1077,13 +1265,13 @@ class Context(list):
     def font(self, fontname, fontsize=None):
         if fontsize is None:
             fontsize = self._state['font'][1]
-        self.append('<g font-family="%s" font-size="%ipx">' % (fontname, fontsize))
+        self.append('<g font-family="%s" font-size="%.0fpx">' % (fontname, fontsize))
         self._stack[-1].append('</g>')
         self._state['font'][0] = fontname
         self._state['font'][1] = fontsize
 
     def fontsize(self, v):
-        self.append('<g font-size="%ipx">' % v)
+        self.append('<g font-size="%.0fpx">' % v)
         self._stack[-1].append('</g>')
         self._state['font'][1] = v
 
@@ -1094,9 +1282,16 @@ class Context(list):
 
     def text(self, s, x, y, align=LEFT, **k):
         k.setdefault('strokewidth', 0)
-        a = ('start', 'end', 'middle')[align]
+        if align == JUSTIFY:
+            a = 'start'
+        if align == LEFT:
+            a = 'start'
+        if align == RIGHT:
+            a = 'end'
+        if align == CENTER:
+            a = 'middle'
         s = '<text x="%.1f" y="%.1f" text-anchor="%s">%s</text>' % (x, y, a, encode('%s' % s))
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append(s)
 
     def textwidth(self, s, **k):
@@ -1109,13 +1304,13 @@ class Context(list):
     def image(self, path, x, y, width=None, height=None, opacity=1.0, **k):
         """ Draws the given image file at x, y.
         """
-        id = 'img-' + hashlib.md5(path.encode('utf-8')).hexdigest()[:16]
+        id = 'img-' + sha(path)[:16]
 
         # Cache image data (once):
         if not path in self._defs:
             w, h = self.imagesize(path)
             s = data_uri(path) # 'data:image/png;base64,...'
-            s = '<image id="%s" width="%i" height="%i" href="%s" />' % (id, w, h, s)
+            s = '<image id="%s" width="%.0f" height="%.0f" href="%s" />' % (id, w, h, s)
             self._defs[id] = s
         w = self._defs[id].split(' ', 3)[2][7:-1]
         h = self._defs[id].split(' ', 4)[3][8:-1]
@@ -1134,7 +1329,7 @@ class Context(list):
             h = w
 
         s = '<use href="#%s" x="%.1f" y="%.1f" style="opacity:%.2f;" />' % (id, x, y, opacity)
-        s = mixin(s, **k)
+        s = mixin(s, self, **k)
         self.append('<g transform="scale(%s, %s)">' % (w, h))
         self.append(s)
         self.append('</g>')
@@ -1196,15 +1391,16 @@ class Context(list):
         w  = self.width
         h  = self.height
         s  = u''
-        s += '<svg version="1.2" width="%i" height="%i" xmlns="http://www.w3.org/2000/svg">\n' % (w, h)
-        s += '<style>a { text-decoration: underline; }</style>'
+        s += '<svg version="1.2" width="%.0f" height="%.0f" xmlns="http://www.w3.org/2000/svg">\n' % (w, h)
+        s += '<desc>%s</desc>\n' % self.info
+        s += '<style>a { text-decoration: underline; }</style>\n'
         s += '<defs>\n' 
         s += '\n'.join(self._defs.values())
         s += '\n'
         s += '</defs>\n'
         s += '<g fill="rgba(0,0,0,1)" stroke="none" stroke-width="1">\n'
         s += '<g font-family="Arial" font-size="12px">\n'
-        s += '<rect width="%i" height="%i" fill="%s" />\n' % (w, h, self._state['background'])
+        s += '<rect width="%.0f" height="%.0f" fill="%s" />\n' % (w, h, self._state['background'])
         s += '\n'.join(self)
         s += '\n'
         s += '\n'.join('\n'.join(reversed(g)) for g in self._stack)

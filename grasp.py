@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.4'
+__version__   =  '2.5'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -60,6 +60,7 @@ import threading
 import subprocess
 import multiprocessing
 import multiprocessing.pool
+import queue
 import itertools
 import collections
 import unicodedata
@@ -275,7 +276,10 @@ def scheduled(interval=MINUTE, blocking=False):
         def timer():
             while 1:
                 time.sleep(interval)
-                f()
+                try:
+                    f()
+                except: # print traceback & keep scheduling:
+                    sys.stderr.write(traceback.format_exc())
         t = threading.Thread(target=timer)
         t.daemon = not blocking
         t.start()
@@ -802,6 +806,9 @@ class Database(object):
     def id(self):
         return self('select last_insert_rowid()').fetchone()[0]
 
+    def find1(self, *args, **kwargs):
+        return next(self.find(*args, **kwargs), None)
+
     def find(self, table, *fields, **filters):
         return self(*SQL_SELECT(table, *fields, **filters))
 
@@ -838,38 +845,57 @@ def concat(a, format='%s', separator=', '):
 
 def op(v):
   # op([1, 2, 3]) => 'in (?, ?, ?)', (1, 2, 3)
+    def esc(v):
+        v = v.replace('_', '\_')
+        v = v.replace('%', '\%')
+        v = v.replace('*',  '%')
+        return v
     if isinstance(v, (int, float)):                 #  1
         return '= ?', (v,)
     if isinstance(v, (set, list)):                  # [1, 2, 3]
         return 'in (%s)' % concat('?' * len(v)), v
     if isinstance(v, (tuple,)):                     # (1, 2)
         return 'between ? and ?', v[:2]
+    if isinstance(v, ne):                           # ne(1)
+        return v()
     if v[:2] in ('<=', '>=', '<>', '!='):           # '<>1'
         return '%s ?' % v[:2], (v[2:],)
-    if v[:1] in ('<' , '>' ):                       # '<1'
+    if v[:1] in ('<' , '>', '='):                   # '<1'
         return '%s ?' % v[:1], (v[1:],)
     if '*' in v:                                    # '*ly'
-        return 'like ?', (v.replace('*', '%'),)
+        return "like ? escape '\\'", (esc(v),)
     else:
         return '= ?', (v,)
+
+class ne(object):
+    def __init__(self, v):
+        self.v = v
+    def __call__(self):
+        s, v = op(self.v)
+        if s[0] in '=<>':                           # ne('<=1')
+            return '!' + s, v
+        if s[0] == '!':                             # ne('!=1')
+            return 'like ?', '%'
+        else:                                       # ne((1, 2))
+            return 'not ' + s, v
 
 def SQL_SELECT(table, *fields, **where):
     """ Returns an SQL SELECT statement + parameters.
     """
-    s = 'select %s '     % (concat(fields, '`%s`') or '*')
-    s+= 'from `%s` '     % table
+    s = 'select %s '        % (concat(fields, '`%s`') or '*')
+    s+= 'from `%s` '        % table
     s+= 'where %s '
-    s+= 'order by `%s` ' % where.pop('sort', 'id')
-    s+= 'limit %s, %s;'  % where.pop('slice', (0, -1))
-    k = where.keys()     # ['name', 'age']
-    v = where.values()   # ['Tom*', '>10']
-    v = map(op, v)       # [('like', 'Tom%'), ('>', '10')]
-    v = zip(*v)          #  ('like', '>'), ('Tom%', '10')
+    s+= 'order by `%s` %s ' % where.pop('sort', ('id', 'asc'))
+    s+= 'limit %s, %s;'     % where.pop('slice', (0, -1))
+    k = where.keys()        # ['name', 'age']
+    v = where.values()      # ['Tom*', '>10']
+    v = map(op, v)          # [('like', 'Tom%'), ('>', '10')]
+    v = zip(*v)             #  ('like', '>'), ('Tom%', '10')
     v = iter(v)
     x = next(v, ())
     v = next(v, ())
     v = itertools.chain(*v)
-    s = s % (concat(zip(k, x), '`%s` %s', ' and') or 1)
+    s = s % (concat(zip(k, x), '`%s` %s', ' and ') or 1)
     return s, tuple(v)
 
 # print(SQL_SELECT('persons', '*', age='>10', sort='age', slice=(0, 10)))
@@ -903,6 +929,52 @@ def SQL_DELETE(table, id):
     return s, (id,)
 
 # print(SQL_DELETE('persons', 1))
+
+#---- SQL ASYNC -----------------------------------------------------------------------------------
+# The SQLite engine locks when writing and other read/write operations have to wait.
+# A batch schedules changes in a thread-safe queue instead of writing them directly.
+
+# A @scheduled Batch.commit() can then write the changes async,
+# so there is only ever 1 thread that locks the database (~ms).
+
+batches = {}
+
+class Batch(Database):
+
+    def __init__(self, name):
+        self._name = name
+        self.queue = batches.setdefault(name, queue.Queue())
+
+    def append(self, *args, **kwargs):
+        self.queue.put(SQL_INSERT(*args, **kwargs))
+
+    def update(self, *args, **kwargs):
+        self.queue.put(SQL_UPDATE(*args, **kwargs))
+
+    def remove(self, *args, **kwargs):
+        self.queue.put(SQL_DELETE(*args, **kwargs))
+
+    def commit(self):
+        """ Commits all pending transactions.
+        """
+        if not self.queue.empty():
+            db = Database(self._name)
+            while not self.queue.empty():
+                sql = self.queue.get()
+                db.execute(*sql, commit=False)
+            db.commit()
+            del db
+
+    def __len__(self):
+        return self.queue.qsize()
+
+# db = Batch(cd('test.db'))
+# db.append('persons', name='Tom', age=30)
+# db.append('persons', name='Guy', age=30)
+# 
+# @scheduled(30)
+# def commit():
+#     Batch(cd('test.db')).commit()
 
 #---- ENCRYPTION ----------------------------------------------------------------------------------
 # The pw() function is secure enough for storing passwords; encrypt() and decrypt() are not secure.
@@ -5119,6 +5191,8 @@ def date(*v, **format):
         return Date.fromtimestamp(v)
     if isinstance(v, tuple):
         return Date(*v)
+    if v is None:
+        return Date.now()
     try:
         return Date.fromtimestamp(rfc_2822(v)) 
     except: 
