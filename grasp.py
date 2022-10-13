@@ -5508,7 +5508,7 @@ class App(ThreadPoolMixIn, WSGIServer):
             elif isinstance(e, RouteError):
                 r.code = 404
             elif isinstance(e, NotFound):
-                r.c0de = 404
+                r.code = 404
             elif isinstance(e, Forbidden):
                 r.code = 403
             elif isinstance(e, TooManyRequests):
@@ -5637,7 +5637,7 @@ class HTTPState(dict):
 
     def expire(self, t=0.0):
         for k in list(self):
-            if self.get(k, [t])[0] + self.expires <= t:
+            if self.get(k, [t])[0] + self.expires <= t: # inactive?
                 self.pop(k, None)
 
 # App.request.session loads App.state() lazily.
@@ -6261,7 +6261,7 @@ def visualize(g, **kwargs):
         '\t\tradius      : %s,' % f('radius', 3.0),
         '\t\tk1          : %s,' % f('k1', 1.0),
         '\t\tk2          : %s,' % f('k2', 1.0),
-        '\t\tk           : %s'  % f('k', 1.0),
+        '\t\tk           : %s,' % f('k', 1.0),
         '\t\tm           : %s'  % f('m', 1.0),
         '\t});',
         '</script>'

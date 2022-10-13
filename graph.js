@@ -35,7 +35,7 @@ bounds = function(p=[]) {
 
 Graph = function(adj={}) {
 	this.nodes = {};  // {node: Point}
-	this.edges = adj; // {node1: {node2: length}}
+	this.edges = adj; // {node1: {node2: weight}}
 	
 	for (let n1 in this.edges) {
 		for (let n2 in this.edges[n1]) {
@@ -45,7 +45,19 @@ Graph = function(adj={}) {
 	}
 };
 
+Graph.prototype.add = function(n1, n2, weight=1.0) {
+	if (!this.nodes[n1])
+		 this.nodes[n1] = new Point();
+	if (!this.nodes[n2])
+		 this.nodes[n2] = new Point();
+	if (!this.edges[n1])
+		 this.edges[n1] = {}
+	if (!this.edges[n1][n2])
+		 this.edges[n1][n2] = weight;
+};
+
 Graph.default = {
+	callback    : false,  // function(graph, iteration)
 	directed    : false,
 	font        : '10px sans-serif',
 	fill        : '#fff', // node color
@@ -178,12 +190,13 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 	ctx.restore();
 };
 
-Graph.prototype.animate = function(canvas, n, options) {
+Graph.prototype.animate = function(canvas, n, options={}) {
 	/* Draws the graph in the given <canvas> element,
 	 * iteratively updating the layout for n frames.
 	 */
+	let i = 0;
 	function f() {
-		if (n-- > 0) {
+		if (i++ < n - 1) {
 			let w = canvas.width;
 			let h = canvas.height;
 			let g = canvas.getContext('2d');
@@ -192,6 +205,9 @@ Graph.prototype.animate = function(canvas, n, options) {
 			this.update(options);
 			this.render(g, w/2, h/2, options);
 			window.requestAnimationFrame(f);
+		}
+		if (options.callback) {
+			options.callback(this, i);
 		}
 	}
 	f = f.bind(this);
