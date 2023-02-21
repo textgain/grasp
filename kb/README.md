@@ -2,6 +2,16 @@
 
 **Grasp** has a knowledge base of optional CSVs with useful world knowledge. These can be used in NLP tasks (e.g., guess region) or ML models (e.g., guess gender).
 
+## en-loc.json
+
+Essential geographical data about 25K+ EU **cities**:
+
+```json
+{'country': {'city': [latitute, longitude, radius]}}
+```
+
+The `radius` is an approximation: 0.0 = population 2<sup>2</sup> K, 0.1 = population 2<sup>3</sup> K, etc.
+
 ## en-loc.csv
 
 Essential geographical data about world **countries** and **states**:
