@@ -6,8 +6,8 @@
 
 Essential geographical data about 25K+ EU **cities**:
 
-```json
-{'country': {'city': [latitute, longitude, radius]}}
+```js
+{"country": {"city": [latitute, longitude, radius]}}
 ```
 
 The `radius` is an approximation: 0.0 = population 2<sup>2</sup> K, 0.1 = population 2<sup>3</sup> K, etc.
