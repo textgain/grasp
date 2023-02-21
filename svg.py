@@ -617,6 +617,8 @@ def mono(clr):
 def swatch(clr, n=10, f=mono):
     """ Returns a list of colors.
     """
+    if isinstance(clr, Color) and n <= 1:
+        clr = [clr]
     if isinstance(clr, Color):
         clr = f(clr)
     if isinstance(clr, Gradient):
