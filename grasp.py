@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.5'
+__version__   =  '2.6'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -128,6 +128,7 @@ if PY3:
 else:
     import urllib2
     import urlparse
+
     urllib.error           = urllib2
     urllib.request         = urllib2
     urllib.parse           = urlparse
@@ -706,23 +707,45 @@ def col(i, a):
     for r in a:
         yield r[i]
 
-def cd(*args):
-    """ Returns the directory of the script that calls cd() + given relative path.
+def cd(*path):
+    """ Returns the path to the script calling cd() + given relative path.
     """
     f = inspect.currentframe()
     f = inspect.getouterframes(f)[1][1] 
     f = os.getcwd() if f == '<stdin>' else f
     p = os.path.realpath(f)
     p = os.path.dirname(p)
-    p = os.path.join(p, *args)
+    p = os.path.join(p, *path)
     return p
 
-GRASP = cd()
+path = [
+    cd('kb' ), # knowledge base
+    cd('lm' ), # language model
+    cd('etc'),
+    cd()
+]
 
 # print(cd('kb', 'en-loc.csv'))
 
-# for code, name, who, where, what, city, lang, flag in csv(cd(GRASP, 'kb', 'en-loc.csv')):
-#     print(name)
+def ls(path='*', root=path, **kwargs): 
+    """ Returns an iterator of matching files & folders at the given root.
+    """
+    if isinstance(root, basestring):
+        root = [root]
+    for p in root:
+        p = os.path.isabs(p) and p or cd(p)
+        p = os.path.join(p, path)
+        p = os.path.abspath(p)
+        p = glob.glob(p, **kwargs)
+        for f in p:
+            yield f
+
+# print(list(ls('*-pos.json.zip'))) # see tag()
+# print(list(ls('*', '.')))
+# print(list(ls('*.*', '/')))
+
+# for r in csv(next(ls('en-loc.csv'))):
+#     print(r[1])
 
 #---- SQL -----------------------------------------------------------------------------------------
 # A database is a collection of tables, with rows and columns of structured data.
@@ -1460,7 +1483,7 @@ def style(s, bins=[0.01 * i for i in range(0, 10)] +
 #---- FEATURE SELECTION ---------------------------------------------------------------------------
 # Feature selection identifies the best features, by evaluating their statistical significance.
 
-def fc(data=[]):
+def fc(data=[]): # (feature / label count)
     """ Returns a {feature: {label: count}} dict 
         for the given list of (vector, label)-tuples.
     """
@@ -1612,7 +1635,7 @@ class Model(object):
         return m
 
 def fit(*args, **kwargs):
-    m = kwargs.pop('model', NN) # 'KNN|NN|NB|DT|RF|RB'
+    m = kwargs.pop('model', NN) # 'KNN|NN|NB|DT|RF|RB|SGD'
     m = globals().get(m, m)
     try:
         return Model.load(args[0])
@@ -1754,7 +1777,7 @@ NN = NeuralNetwork = Perceptron
 
 class StochasticGradientDescent(Model):
 
-    def __init__(self, examples=[], n=10, rate=0.01):
+    def __init__(self, examples=[], n=10, rate=0.01, **kwargs):
         """ Stochastic Gradient Descent learning algorithm.
         """
         self.labels  = collections.defaultdict(int)
@@ -1852,7 +1875,7 @@ NB = NaiveBayes
 
 class KNN(Model):
     
-    def __init__(self, examples=[]):
+    def __init__(self, examples=[], **kwargs):
         """ k-Nearest Neighbors learning algorithm.
         """
         self.labels   = collections.defaultdict(int)
@@ -1869,7 +1892,7 @@ class KNN(Model):
         """ Returns a dict of (label, probability)-items.
         """
         p = dict.fromkeys(self.labels, 0.0)
-        # random breaks equidistant ties:
+        # randomly breaks equidistant ties:
         q = ((distance(v, x), random.random(), label) for x, label in self.examples)
         q = heapq.nsmallest(k, q)
         for d, _, label in q:
@@ -2277,17 +2300,18 @@ class Calibrated(Model):
     def __repr__(self):
         return 'Calibrated(%s)' % repr(self._model)
 
-    def __init__(self, model, label, data=[]):
+    def __init__(self, model, label, data=[], **kwargs):
         """ Returns a model calibrated on the given data,
             which is a set of (vector, label)-tuples.
         """
         self._model = model
         self._label = label
+
         # Isotonic regression:
         y = ((model.predict(v)[label], label == x) for v, x in data)
         y = sorted(y) # monotonic
         y = zip(*y)
-        y = list(y or ((),()))
+        y = list(y) or ((),())
         x = list(y[0])
         y = list(y[1])
         y = pav(y)
@@ -2295,21 +2319,27 @@ class Calibrated(Model):
         y = [0] + y + [1]
         f = {}
         i = 0
+
         # Linear interpolation:
         for p in range(100 + 1):
             p = p * 0.01
             while x[i] < p:
                 i += 1
             f['%.2f' % p] = (y[i-1] * (x[i] - p) + y[i] * (p - x[i-1])) / (x[i] - x[i-1])
+
         self._f = f
 
-    def predict(self, v):
+    def predict(self, v, *args, **kwargs):
         """ Returns the label's calibrated probability (0.0-1.0).
         """
-        p = self._model.predict(v)[self._label]
-        p = self._f['%.2f' % p]
+        p = self._model.predict(v, *args, **kwargs)[self._label] 
+        p = self._f['%.2f' % p] + 0
         p = {self._label: p}
         return p
+
+    @property
+    def labels(self):
+        return self._model.labels
 
     @classmethod
     def _encode(cls, m):
@@ -2329,14 +2359,37 @@ class Calibrated(Model):
         m2._f = m['f']
         return m2
 
+# Note: Calibrated won't work with kfoldcv().
+
 calibrate = Calibrated
 
 # data = []
-# for review, polarity in csv('reviews-assorted1000.csv'):
+# for review, polarity in csv('reviews.csv'):
 #     data.append((v(review), polarity))
 # 
 # m = Model.load('sentiment.json')
 # m = calibrate(m, '+', data)
+
+def calibrated(examples=[], **kwargs):
+    """ Returns a calibrated model.
+    """
+    k = kwargs.pop('label')
+    m = kwargs.pop('base' , 
+        kwargs.pop('model', NN))
+    d = kwargs.pop('d', 0.1)
+    d = max(d, 0.0)
+    d = min(d, 1.0)
+    e = list(shuffled(examples))
+    i = len(e) * d
+    i = int(i)
+    a = e[i:]
+    b = e[:i] # 10%
+    m = fit(a, model=m, **kwargs)
+    m = Calibrated(m, label=k, data=b)
+    return m
+
+# m = calibrated(data, label='+', model=NN)
+# m.save('sentiment.json')
 
 #---- EXPLAINABILITY ------------------------------------------------------------------------------
 # Complex models can become "black boxes" with little insight into their decision-making process.
@@ -2480,10 +2533,10 @@ class Classifier(object):
     def __init__(self, path, *args, **kwargs): # model=NN
         """ Returns a classifier with a trained model.
         """
-        if os.path.exists(path):
+        try:
             with open(path, 'r') as f:
                 self.model = Model.load(f)
-        else:
+        except:
             with open(path, 'w') as f:
                 self.model = fit(self.vectorized(), *args, **kwargs)
                 self.model.save(f)
@@ -2503,7 +2556,11 @@ class Classifier(object):
     def test(self, k=10, **kwargs):
         """ Returns the average (precision, recall).
         """
-        return kfoldcv(self.model.__class__, self.vectorized(), k=k, **kwargs)
+        if isinstance(self.model, Calibrated):
+            m = self.model._model
+        else:
+            m = self.model
+        return kfoldcv(m.__class__, self.vectorized(), k=k, **kwargs)
 
 # class Toxicity(Classifier):
 #     def data(self):
@@ -2518,6 +2575,22 @@ class Classifier(object):
 # print(toxic('foolish'))
 # print(toxic('kitteh'))
 
+# class Gender(Classifier):
+#     def data(self):
+#         return (r[:2] for r in csv(cd('kb', 'en-per.csv')))
+#     def v(self, s):
+#         return vec(s, features=('c2', 'c3', '$2'))
+#     def __call__(self, s):
+#         return round(super().predict(s)['m'], 2)
+# 
+# male = Gender('gender.json', model=calibrated, base=NB, label='m')
+# 
+# print(male('Alice'))
+# print(male('Kitty'))
+# print(male('Bob'))
+# print(male('Taylor'))
+# print(male('Thomas'))
+
 ##### NLP #########################################################################################
 
 #---- TEXT GENERATION -----------------------------------------------------------------------------
@@ -2530,10 +2603,10 @@ def cfg(s, rules={}, placeholder=r'@([\w+]+)', format=lambda s: s, depth=10):
     def closure(s, n):
         def replace(m):
             try:
-                s = m.group(1)
-                s = rules[s]
-                s = random.choice(s)
-                s = u(s)
+                s = m.group(1)        #  '@hungry'
+                s = rules[s]          # ['starved', ...]
+                s = random.choice(s)  #  'starved'
+                s = u(s)              # u'starved'
                 s = closure(s, n-1)
             except:
                 s = m.group(0)
@@ -2546,7 +2619,7 @@ def cfg(s, rules={}, placeholder=r'@([\w+]+)', format=lambda s: s, depth=10):
     while 1:
         yield format(closure(s, depth))
 
-# print(next(cfg('The cat is @hungry!', 
+# print(next(cfg('The cat is @hungry!',
 #     rules={
 #         'very': (
 #             'extremely'    ,
@@ -2589,32 +2662,48 @@ class trie(dict):
         """ Returns an iterator of (i, j, k, v) matches 
             for keys bounded by the separator (or None).
         """
-        n = len(s)
-        i = 0
-        while i < n:
-            b = self # branch
-            j = i
-            while j < n:
-                if etc and etc in b:
-                    while j < n and not (sep and sep(s[j])): # lookahead
-                        j += 1
-                    j -= 1
-                    b = {s[j]: b[etc]} # greedy
-                if not s[j] in b:
-                    break
-                b = b[s[j]]
-                j += 1
-                if j == n and etc and etc in b and None in b[etc]:
-                    b = b[etc]
-                if None not in b: # leaf?
+        x = (etc or '')[0:1] # *
+        y = (etc or '')[1:2] # .
+        z = (etc or '')[2:3] # ?
+        n = ((0, self),)
+        m = dict(self)
+        m.pop(x, None) # w/o lookbehind 
+
+        for j, c in enumerate(s + ' '): 
+            a = []
+            b = not sep    \
+                 or sep(c) \
+                 or j == len(s) # non-greedy
+
+            for i, n in n:
+                # Find matches:
+                if b and None in n:
+                    yield Match(i, j, s[i:j], n[None])
+                if b and z in n and None in n[z]:
+                    yield Match(i, j, s[i:j], n[z][None]) # ?
+                if b and x in n and None in n[x]:
+                    yield Match(i, j, s[i:j], n[x][None]) # *
                     continue
-                if sep and not sep(s[i-1:i]):
-                    continue
-                if sep and not sep(s[j:j+1]):
-                    continue
-                if i != j:
-                    yield Match(i, j, s[i:j], b[None])
-            i += 1
+                # Find branches:
+                if x in n:
+                    a.append((i, {x: n[x]}))  # cat = c*
+                if x in n and c in n[x]:
+                    a.append((i, n[x][c]))    # cat = c*t
+                if y in n:
+                    a.append((i, n[y]))       # cat = c.t
+                if z in n:
+                    a.append((i, n[z]))       # cat = cat?
+                if z in n and c in n[z]:
+                    a.append((i, n[z][c]))    # cat = ca?t
+                if c in n:
+                    a.append((i, n[c]))       # cat = cat
+            if b:
+                if sep:
+                    a.clear()
+                    a.append((j + 1, self))   # break?
+                else:
+                    a.append((j + 1, m))
+            n = a
 
 # print(list(trie({'wow': +0.5, 'wtf': -0.5}).search('oh wow!')))
 
@@ -2640,13 +2729,14 @@ def mark(s, matches=[], format=lambda w: ' '.join(w), tag=('<mark class="{}">', 
     f = u''
     o = 0
     for v, (i, j) in m2:
-        v = sorted(v)
-        v = format(v)
-        f = f + encode(s[o:i])
-        f = f + u(tag[0]).format(v)
-        f = f + encode(s[i:j])
-        f = f + u(tag[1])
-        o = j
+        if i < len(s):
+            v = sorted(v)
+            v = format(v)
+            f = f + encode(s[o:i])
+            f = f + u(tag[0]).format(v)
+            f = f + encode(s[i:j])
+            f = f + u(tag[1])
+            o = j
     f += encode(s[o:])
     return f
 
@@ -2898,23 +2988,49 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
 # print(sg('avalanches')) # avalanche
 
 @static(m=None)
-def lang(s, confidence=0.75):
-    """ Returns the language of the given string (en/es/de/fr...).
+def lang(s, confidence=0.1):
+    """ Returns a (language, confidence)-dict for the given string.
     """
     if not lang.m:
-        m = lang.m = Model.load(unzip(cd('lm', '~lang.json.zip')))
+        m = lang.m = Model.load(unzip(next(ls('~lang.json.zip')))) 
     else:
         m = lang.m
 
-    v = vec(s, ('c1', 'c2'))
-    k = m.predict(v) # 92.5%
-    k = top(k)
-
-    return k[0] if k[1] >= confidence else ''
+    v = vec(s, ('c1', 'c2')) # 92.5%
+    p = m.predict(v)
+    p = sparse(p, confidence)
+    return p
 
 language = lang
 
 # print(lang('the cat sat on the mat'))
+
+Location = collections.namedtuple('Location', ('city', 'country', 'lat', 'lng'))
+
+@static(m=None)
+def loc(s):
+    """ Returns a (Location, count)-dict of city names (EU).
+    """
+    if not loc.trie:
+        m = ls('en-loc.json')
+        m = next(m)
+        m = open(m)
+        m = json.load(m)
+        m = m.items()
+        m = {k2: Location(k2, k1, *v[k2][:2]) for k1, v in m for k2 in v} 
+        m = loc.m = trie(m)
+    else:
+        m = loc.m
+
+    f = m.search(s)
+    f = (m.tag for m in f)
+    f = collections.Counter(f)
+    return f
+
+location = loc
+
+# for k, v in loc('Schietpartij in Brussel').most_common(1):
+#     print(k, v)
 
 #---- TOKENIZER -----------------------------------------------------------------------------------
 # The tokenize() function identifies tokens (= words, symbols) and sentence breaks in a string.
@@ -3182,7 +3298,7 @@ class Tagged(list):
 
 tagger = LazyDict() # {'en': Model}
 
-for f in glob.glob(cd('lm', '*-pos.json.zip')):
+for f in ls('*-pos.json.zip'):
     tagger[f[-15:-13]] = lambda f=f: Perceptron.load(unzip(f))
 #                                ^ early binding
 
@@ -3504,7 +3620,7 @@ def head(phrase, tag='NP', language='en'):
 
 df = LazyDict() # document frequency
 
-for f in glob.glob(cd('lm', '*-doc.json.zip')):
+for f in ls('*-doc.json.zip'):
     df[f[-15:-13]] = lambda f=f: json.load(unzip(f))
 
 def keywords(s, language='en', n=10):
@@ -3560,7 +3676,7 @@ polarity = {
 
 polarity = LazyDict()
 
-for f in glob.glob(cd('lm', '*-pov.json.zip')): # point-of-view
+for f in ls('*-pov.json.zip'): # point-of-view
     polarity[f[-15:-13]] = lambda f=f: json.load(unzip(f))
 
 def sentiment(s, language='en'):
@@ -3937,12 +4053,14 @@ def request(url, data={}, headers={}, timeout=10):
     except urllib.error.URLError as e:
       # print(e.read())
         status = getattr(e, 'code', None) # HTTPError
-        if status == 401:
-            raise Forbidden
-        if status == 403:
-            raise Forbidden
         if status == 404:
             raise NotFound
+        if status == 403:
+            raise Forbidden
+        if status == 401:
+            raise Forbidden
+        if status == 402:
+            raise TooManyRequests
         if status == 420:
             raise TooManyRequests
         if status == 429:
@@ -4115,9 +4233,9 @@ def search(q, engine='google', page=1, language='en', delay=1, cached=False, key
     else:
         return f(q, page, language, delay, cached)
 
-# for url, description in search('textgain'):
-#     print(url)
-#     print(description)
+# for r in search('textgain'):
+#     print(r.url)
+#     print(r.text)
 #     print('\n')
 
 #---- TRANSLATE -----------------------------------------------------------------------------------
@@ -4490,6 +4608,31 @@ def wiktionary(*args, **kwargs):
 # age = re.search(r'[0-9]+', age).group(0)
 # age = int(age)
 # print(age)
+
+#---- GPS -----------------------------------------------------------------------------------------
+
+Coordinates = collections.namedtuple('Coordinates', ('lat', 'lng'))
+
+def gps(q, delay=35, cached=False, key=None):
+    """ Returns the latitute & longitude of a location.
+    """
+    r  = 'https://api.opencagedata.com/geocode/v1/json'
+    r += '?key=aa49341718034ffc9774c216b6460b71' 
+    r += '&q=' + urllib.parse.quote(b(q or '--'))
+    r  = download(r, delay=delay, cached=cached) # 2500 / day
+    r  = json.loads(u(r))
+    r  = r.get('results')
+    r  = iter(r)
+    r  = next(r, {})
+    r  = r.get('geometry', {})
+    r  = r.get('lat'), \
+         r.get('lng')
+    r  = Coordinates(*r)
+    r  = None if None in r else r
+    return r
+
+# print(gps('Aalst, BE'))
+# print(gps('Aalst, NL'))
 
 #---- RSS -----------------------------------------------------------------------------------------
 
@@ -4982,24 +5125,25 @@ plain = plaintext
 def encode(s):
     """ Returns a string with encoded entities.
     """
-    s = s.replace('&' , '&amp;' )
-    s = s.replace('<' , '&lt;'  )
-    s = s.replace('>' , '&gt;'  )
-    s = s.replace('"' , '&quot;')
-    s = s.replace("'" , '&apos;')
-  # s = s.replace('\n', '&#10;' )
-  # s = s.replace('\r', '&#13;' )
+    s = s.replace('&' , '&amp;'  )
+    s = s.replace('"' , '&quot;' )
+    s = s.replace("'" , '&apos;' )
+    s = s.replace('<' , '&lt;'   )
+    s = s.replace('>' , '&gt;'   )
+  # s = s.replace('\n', '&#10;'  )
+  # s = s.replace('\r', '&#13;'  )
     return s
 
 def decode(s):
     """ Returns a string with decoded entities.
     """
-    s = s.replace('&amp;'  , '&')
-    s = s.replace('&lt;'   , '<')
-    s = s.replace('&gt;'   , '>')
-    s = s.replace('&quot;' , '"')
-    s = s.replace('&apos;' , "'")
-    s = s.replace('&nbsp;' , ' ')
+    s = s.replace('&nbsp;' , ' ' )
+    s = s.replace('&quot;' , '"' )
+    s = s.replace('&apos;' , "'" )
+    s = s.replace('&#39;'  , "'" )
+    s = s.replace('&lt;'   , '<' )
+    s = s.replace('&gt;'   , '>' )
+    s = s.replace('&amp;'  , '&' )
   # s = s.replace('&#10;'  , '\n')
   # s = s.replace('&#13;'  , '\r')
     s = re.sub(r'https?://.*?(?=\s|$)', \
@@ -5021,15 +5165,17 @@ def docx(path):
         s = s + '\n\n'
     return s
 
-def pdf(path, encoding='UTF-8', cmd=cd('etc', 'pdftotext')):
+def pdf(path, encoding='UTF-8'):
     """ Returns the given .pdf file as a plain text string.
     """
     if OS == 'Linux':
-        p = cmd + '-linux'
+        p = next(ls('pdftotext-linux'  ), '') # Xpdf tools 
     if OS == 'Darwin':
-        p = cmd + '-mac'
+        p = next(ls('pdftotext-mac'    ), '')
     if OS == 'Windows':
-        p = cmd + '-win.exe'
+        p = next(ls('pdftotext-win.exe'), '')
+    if not p:
+        p = next(ls('pdftotext'))
 
     s = subprocess.check_output((p, '-q', '-enc', encoding, path, '-'))
     s = u(s)
@@ -5148,7 +5294,7 @@ class Date(datetime.datetime):
 
     @property
     def timestamp(self):
-        return time.mktime(self.timetuple())
+        return time.mktime(self.timetuple()) + self.microsecond * 0.000001
 
     def format(self, s):
         return self.strftime(s)
@@ -5157,7 +5303,7 @@ class Date(datetime.datetime):
         return self.strftime('%Y-%m-%d %H:%M:%S')
 
     def __int__(self):
-        return self.timestamp
+        return self.timestamp.__int__()
 
     def __add__(self, t):
         return date(datetime.datetime.__add__(self, 
@@ -6289,8 +6435,9 @@ def setup(src='https://github.com/textgain/grasp/blob/master/', language=('en',)
         a.append(('lm', '%s-pos.json.zip' % k)) # parts-of-speech
         a.append(('lm', '%s-pov.json.zip' % k)) # point-of-view
         a.append(('lm', '%s-doc.json.zip' % k)) # document frequency
+        a.append(('kb', '%s-loc.json'     % k)) # locale
         a.append(('kb', '%s-loc.csv'      % k)) # locale
-        a.append(('kb', '%s-nom.csv'      % k)) # gender
+        a.append(('kb', '%s-per.csv'      % k)) # gender
     for f in a:
         if not os.path.exists(cd(*f)):
             try:
