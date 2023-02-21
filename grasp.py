@@ -3011,7 +3011,7 @@ Location = collections.namedtuple('Location', ('city', 'country', 'lat', 'lng'))
 def loc(s):
     """ Returns a (Location, count)-dict of city names (EU).
     """
-    if not loc.trie:
+    if not loc.m:
         m = ls('en-loc.json')
         m = next(m)
         m = open(m)
