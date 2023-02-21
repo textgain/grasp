@@ -63,7 +63,13 @@ Once this app is up, go check [http://127.0.0.1:8080/app?q=cat](http://127.0.0.1
 **Find language** with `lang(str)` for 40+ languages and ~92.5% accuracy:
 
 ```py
-print(lang('The cat sat on the mat.')) # en
+print(lang('The cat sat on the mat.')) # {'en': 0.99}
+```
+
+**Find locations** with `loc(str)` for 25K+ EU cities:
+
+```py
+print(loc('The cat lives in Catena.')) # {('Catena', 'IT', 43.8, 11.0): 1}
 ```
 
 **Find words & sentences** with `tok(str)` (tokenize) at ~125K words/sec:
@@ -94,6 +100,16 @@ for word, pos in tag(tok('The cat sat on the mat.'), language='en'):
 * You'll need the language models in [grasp/lm](https://github.com/textgain/grasp/tree/master/lm).
 
 
+**Find keywords** with `trie`, a compiled dict that scans ~250K words/sec:
+
+```py
+t = trie({'cat*': 1, 'mat' : 2})
+```
+```py
+for i, j, k, v in t.search('Cats love catnip.', etc='*'):
+    print(i, j, k, v)
+```
+
 ## Tools for Machine Learning
 
 Machine Learning (ML) algorithms learn by example. If you show them 10K spam and 10K real emails (i.e., train a model), they can predict whether other emails are also spam or not.
@@ -104,8 +120,8 @@ Each training example is a `{feature: weight}` dict with a label. For text, the 
 **Quantify text** with `vec(str)` (vectorize) into a `{feature: weight}` dict:
 
 ```py
-v1 = vec('I love cats! 😀', features=['c3', 'w1'])
-v2 = vec('I hate cats! 😡', features=['c3', 'w1'])
+v1 = vec('I love cats! 😀', features=('c3', 'w1'))
+v2 = vec('I hate cats! 😡', features=('c3', 'w1'))
 ```
 
 * `c1`, `c2`, `c3` count consecutive characters. For `c2`, _cats_ → 1x _ca_, 1x _at_, 1x _ts_.
@@ -193,7 +209,7 @@ data.save(cd('cats.csv'))
 
 ## Tools for Good
 
-A big concern in AI is bias introduced by human trainers. Remember the `Model` trained earlier? Grasp has tools to **explain** how & why it makes decisions:
+A challenge in AI is bias introduced by human trainers. Remember the `Model` trained earlier? Grasp has tools to **explain** how & why it makes decisions:
 
 ```py
 print(explain(vec('She hates dogs.'), m)) # why so negative?
