@@ -7,17 +7,20 @@ v2 = {'x': 3, 'y': 4}
 v3 = {'x': 5, 'y': 6}
 v4 = {'x': 7, 'y': 0}
 
-assert round( distance(v1, v2)               , 2) ==  2.83
-assert round(      dot(v1, v2)               , 2) == 11.00
-assert round(     norm(v1)                   , 2) ==  2.24
-assert round(      cos(v1, v2)               , 2) ==  0.02
-assert round(      knn(v1, (v2, v3))[0][0]   , 2) ==  0.98
+assert round( distance(v1, v2)               , 2) == 2.83
+assert round(      dot(v1, v4)               , 2) == 7.00
+assert round(     norm(v1)                   , 2) == 2.24
+assert round(      cos(v1, v2)               , 2) == 0.02
+assert round(     diff(v1, v2)               , 2) == 0.00
+assert round(      knn(v1, (v2, v3))[0][0]   , 2) == 0.98
 assert             knn(v1, (v2, v3))[0][1]        ==  v2
+assert  list(   reduce(v1, 'y').keys()          ) == ['x']
 assert          sparse(v4)                        == {'x': 7}
 assert              tf(v4)                        == {'x': 1, 'y': 0}
-assert       features((v1, v2))                   == set(('x', 'y'))
-assert next(iter(tfidf((v1, v2))))['x']           ==  0.25
 assert       centroid((v1, v2))                   == {'x': 2, 'y': 3}
+assert       features((v1, v2))                   == set(('x', 'y'))
+assert next(iter(tfidf((v1, v2))))['x']           == 0.25
+assert       majority([1, 1, 2])                  == 1
 
 assert scan(u'Here, kitty kitty!'               ) == [4, 17]
 assert scan(u'Here, kitty!'                     ) == [4, 11]
@@ -86,7 +89,7 @@ assert list(  chngrams('cats', 2))                == ['ca', 'at', 'ts']
 assert list(    ngrams(('cats', '&', 'dogs'), 2)) == [('cats', '&'), ('&', 'dogs')]
 assert list(    ngrams('cats & dogs', 2))         == [('cats', '&'), ('&', 'dogs')]
 assert list( skipgrams('cats & dogs', 1))         == [('cats', ('&',)), ('&', ('cats', 'dogs')), 
-                                                     ('dogs', ('&',))]
+                                                      ('dogs', ('&',))]
 
 e1 = DOM('<div id="main"><div class="story"><p>1</p><p>2</p></div</div>')
 e2 = DOM('<div><a href="http://www.site.com">x</a></div>')
@@ -119,6 +122,14 @@ assert plaintext(u'<a>b</a>\nc'                 ) == u'b c'
 assert plaintext('<a>b </a>c'                   ) == u'b c'
 assert plaintext('<p>b </p>c'                   ) == u'b\n\nc'
 
+assert similarity('cat', 'can', f=chngrams, n=2 ) == 0.5
+assert similarity('cat', 'can', f=chngrams, n=1 ) == 2/3.
+
+assert readability('the cat sat on the mat'     ) == 1.0
+assert readability('felis silvestris catus'     ) == 0.0
+
+assert collapse(u'a    b  c'                    ) == u'a b c'
+assert cap     (u'cat. cat.'                    ) == u'Cat. Cat.'
 assert sep     (u"'a's b, c (d).'"              ) == u"'a 's b , c ( d ) . '"
 assert encode  (u'<a> & <b>'                    ) == u'&lt;a&gt; &amp; &lt;b&gt;'
 assert decode  (u'&lt;a&gt; &amp; &lt;b&gt;'    ) == u'<a> & <b>'
@@ -133,6 +144,8 @@ assert sg      (u'cats'                         ) == u'cat'
 assert sg      (u'mice'                         ) == u'mouse'
 assert sg      (u'pussies'                      ) == u'pussy'
 assert sg      (u'cheeses'                      ) == u'cheese'
+
+assert hilite  ('a b', {'a': 1.0}               ) == '<mark style="background: #ff0f;">a</mark> b'
 
 assert u(date(0                                )) == u'1970-01-01 01:00:00'
 assert u(date(2000, 12, 31                     )) == u'2000-12-31 00:00:00'
@@ -189,3 +202,10 @@ assert len(list(t.search('qx'     , etc='*.?' ))) == 0
 assert len(list(t.search('qxq'    , etc='*.?' ))) == 1
 assert len(list(t.search('qyq'    , etc='*.?' ))) == 1
 assert len(list(t.search('qq'     , etc='*.?' ))) == 1
+
+assert subs([0, 3, 'cats', 1], [0, 2, 'cat', 1 ]) == True
+
+assert top( lang('The cat is snoring'       ))[0] == 'en'
+assert top( lang('De kat is aan het snurken'))[0] == 'nl'
+
+assert top(  loc('Cats conquered Paris'))[0].city == 'Paris'
