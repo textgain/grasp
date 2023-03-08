@@ -64,6 +64,7 @@ import queue
 import itertools
 import collections
 import unicodedata
+import string
 import socket; socket.setdefaulttimeout(10)
 import wsgiref
 import wsgiref.simple_server
@@ -1686,16 +1687,16 @@ def softmax(p, a=1.0):
 # print(softmax({'cat': +1, 'dog': -1})) # {'cat': 0.88, 'dog': 0.12}
 # print(softmax({'cat': +2, 'dog': -2})) # {'cat': 0.98, 'dog': 0.02}
 
-def top(p):
+def top(p, default=None):
     """ Returns a (key, value)-tuple with the max value in the dict.
     """
-    if p:
+    try:
         v = max(p.values())
-    else:
-        v = 0.0
-    k = [k for k in p if p[k] == v]
-    k = random.choice(k)
-    return k, v
+        k = [k for k in p if p[k] == v]
+        k = random.choice(k)
+        return k, v
+    except ValueError:
+        return default
 
 # print(top({'cat': 1, 'dog': 2})) # ('dog', 2)
 
@@ -2504,13 +2505,14 @@ def counterfactual(v, label, model):
 # This model is biased towards jailing black people:
 # print(counterfactual({'black': 1, '>25': 1, 'drugs': 1}, 'bail', m))
 
-def hilite(s, words={}, style='background: rgba(255, 255, 0, %.1f);', format=max):
+def hilite(s, words={}, style='background: #ff0{:1f};', format=max):
     """ Returns a string with <mark> tags for given (word, weight)-items,
         where background opacity of marked words represents their weight.
     """
     e = '<mark style="%s">' % style, '</mark>'
-    t = trie(words)
-    m = t.search(s, sep=None)
+    w = words
+    w = w if isinstance(w, trie) else trie(w) 
+    m = w.search(s, sep=None)
     s = mark(s, m, format, tag=e)
     return s
 
@@ -2641,7 +2643,7 @@ Match = collections.namedtuple('Match', ('start', 'end', 'word', 'tag'))
 def subs(m1, m2):
     """ Returns True if the first match subsumes (=contains) the second.
     """
-    return m1[0] <= m2[0] and m1[1] >= m2[1] and len(m1[2]) > len(m2[2])
+    return m1[0] <= m2[0] and m1[1] >= m2[1]
 
 # print(subs((0, 11, 'superficial', -1), (0, 5, 'super', +1)))
 
@@ -2711,6 +2713,18 @@ class trie(dict):
 
 #---- TEXT MARKUP ---------------------------------------------------------------------------------
 
+class Formatter(string.Formatter):
+    """ Returns a string formatter with custom specifiers.
+    """
+    def format_field(self, v, k):
+        if k == '1f':
+            k, v = 'x', int(v * 15) # 1.0 = 'f'
+        return string.Formatter.format_field(self, v, k)
+
+formatter = Formatter()
+
+# print(formatter.format('color: #ff0{:1f};', 0.5))
+
 def mark(s, matches=[], format=lambda w: ' '.join(w), tag=('<mark class="{}">', '</mark>')):
     """ Returns a HTML string with <mark> tags for matches.
     """
@@ -2733,7 +2747,7 @@ def mark(s, matches=[], format=lambda w: ' '.join(w), tag=('<mark class="{}">', 
             v = sorted(v)
             v = format(v)
             f = f + encode(s[o:i])
-            f = f + u(tag[0]).format(v)
+            f = f + formatter.format(u(tag[0]), v)
             f = f + encode(s[i:j])
             f = f + u(tag[1])
             o = j
@@ -2999,6 +3013,7 @@ def lang(s, confidence=0.1):
     v = vec(s, ('c1', 'c2')) # 92.5%
     p = m.predict(v)
     p = sparse(p, confidence)
+    p = collections.Counter(p)
     return p
 
 language = lang
@@ -3029,7 +3044,7 @@ def loc(s):
 
 location = loc
 
-# for k, v in loc('Schietpartij in Brussel').most_common(1):
+# for k, v in loc('Aanslag in Brussel').most_common(1):
 #     print(k, v)
 
 #---- TOKENIZER -----------------------------------------------------------------------------------
@@ -3765,7 +3780,6 @@ class Embedding(collections.OrderedDict):
 
         if s:
             a = cooc(s, **kwargs) # {word1: {word2: count}}
-
             a = a.items()
             a = sorted(a, key=lambda wv: sum(wv[1].values()))
             a = reversed(a)
@@ -4608,6 +4622,49 @@ def wiktionary(*args, **kwargs):
 # age = re.search(r'[0-9]+', age).group(0)
 # age = int(age)
 # print(age)
+
+#---- GPT -----------------------------------------------------------------------------------------
+
+# https://platform.openai.com/signup
+# https://platform.openai.com/docs/guides/chat
+
+keys['GPT'] = ''
+
+class Q(unicode): pass
+class A(unicode): pass
+
+def gpt(q, delay=1, cached=False, key=None, d=1):
+    """ Returns ChatGPT's response as a string.
+    """
+    if not isinstance(q, list): # [Q, A, ...] conversation
+        q = [q]
+    for i, s in enumerate(q):
+        if type(s) in (Q, basestring):
+            q[i] = { 'content': s, 'role': 'user'      }
+        if type(s) in (A,):
+            q[i] = { 'content': s, 'role': 'assistant' }
+
+    r  = 'https://api.openai.com/v1/chat/completions', {
+         'messages'      : q,
+         'temperature'   : d,
+         'model'         : 'gpt-3.5-turbo',
+    }, { 'Content-Type'  : 'application/json',
+         'Authorization' : 'Bearer %s' % (key or keys['GPT'])
+    }
+    r = download(*r, delay=delay, cached=cached, timeout=30)
+    r = json.loads(u(r))
+    r = r['choices'][0]
+    r = r['message']
+    r = r['content']
+    r = r.strip()
+    return r
+
+# q = 'You are a comedian. What is Earth?'
+# q = 'Write like a child. What is Earth?'
+
+# q = 'Write like a lawful evil dragon. Joke about capturing an adventurer.'
+
+# print(gpt(q))
 
 #---- GPS -----------------------------------------------------------------------------------------
 
