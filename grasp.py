@@ -4633,7 +4633,7 @@ keys['GPT'] = ''
 class Q(unicode): pass
 class A(unicode): pass
 
-def gpt(q, delay=1, cached=False, key=None, d=1):
+def gpt(q, d=1, delay=1, cached=False, timeout=30, key=None):
     """ Returns ChatGPT's response as a string.
     """
     if not isinstance(q, list): # [Q, A, ...] conversation
@@ -4651,7 +4651,7 @@ def gpt(q, delay=1, cached=False, key=None, d=1):
     }, { 'Content-Type'  : 'application/json',
          'Authorization' : 'Bearer %s' % (key or keys['GPT'])
     }
-    r = download(*r, delay=delay, cached=cached, timeout=30)
+    r = download(*r, delay=delay, cached=cached, timeout=timeout)
     r = json.loads(u(r))
     r = r['choices'][0]
     r = r['message']

@@ -60,25 +60,25 @@ Once this app is up, go check [http://127.0.0.1:8080/app?q=cat](http://127.0.0.1
 
 ## Tools for Natural Language Processing
 
-**Find language** with `lang(str)` for 40+ languages and ~92.5% accuracy:
+**Get language** with `lang(str)` for 40+ languages and ~92.5% accuracy:
 
 ```py
 print(lang('The cat sat on the mat.')) # {'en': 0.99}
 ```
 
-**Find locations** with `loc(str)` for 25K+ EU cities:
+**Get locations** with `loc(str)` for 25K+ EU cities:
 
 ```py
 print(loc('The cat lives in Catena.')) # {('Catena', 'IT', 43.8, 11.0): 1}
 ```
 
-**Find words & sentences** with `tok(str)` (tokenize) at ~125K words/sec:
+**Get words & sentences** with `tok(str)` (tokenize) at ~125K words/sec:
 
 ```py
 print(tok("Mr. etc. aren't sentence breaks! ;) This is:.", language='en'))
 ```
 
-**Find word polarity** with `pov(str)` (point-of-view). Is it a positive or negative opinion?
+**Get word polarity** with `pov(str)` (point-of-view). Is it a positive or negative opinion?
 
 ```py
 print(pov(tok('Nice!', language='en'))) # +0.6
@@ -88,7 +88,7 @@ print(pov(tok('Dumb.', language='en'))) # -0.4
 * For de, en, es, fr, nl, with ~75% accuracy.
 * You'll need the language models in [grasp/lm](https://github.com/textgain/grasp/tree/master/lm).
 
-**Find word types** with `tag(str)` in 10+ languages using robust ML models from [UD](https://universaldependencies.org):
+**Tag word types** with `tag(str)` in 10+ languages using robust ML models from [UD](https://universaldependencies.org):
 
 ```py
 for word, pos in tag(tok('The cat sat on the mat.'), language='en'):
@@ -100,7 +100,7 @@ for word, pos in tag(tok('The cat sat on the mat.'), language='en'):
 * You'll need the language models in [grasp/lm](https://github.com/textgain/grasp/tree/master/lm).
 
 
-**Find keywords** with `trie`, a compiled dict that scans ~250K words/sec:
+**Tag keywords** with `trie`, a compiled dict that scans ~250K words/sec:
 
 ```py
 t = trie({'cat*': 1, 'mat' : 2})
@@ -108,6 +108,12 @@ t = trie({'cat*': 1, 'mat' : 2})
 ```py
 for i, j, k, v in t.search('Cats love catnip.', etc='*'):
     print(i, j, k, v)
+```
+
+**Get answers** with `gpt()`. You'll need an [OpenAI](https://platform.openai.com/) API key.
+
+```py
+print(gpt("Why do cats sit on mats? (you're a psychologist)", key='...'))
 ```
 
 ## Tools for Machine Learning
@@ -202,8 +208,8 @@ for code, country, _, _, _, _, _ in csv(cd('kb', 'en-loc.csv')):
 
 ```py
 data = csv()
-data.append(('cat', 'Lizzy'))
-data.append(('cat', 'Polly'))
+data.append(('cat', 'Kitty'))
+data.append(('cat', 'Simba'))
 data.save(cd('cats.csv'))
 ```
 
