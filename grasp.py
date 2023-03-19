@@ -795,6 +795,10 @@ class Database(object):
         """
         self.connection = sqlite.connect(name, timeout)
         self.connection.row_factory = factory
+        self.connection.create_function('regexp', -1, \
+            lambda *v: \
+                re.search(*v) is not None
+        )
         if schema:
             for q in schema.strip(';').split(';'):
                 q = q.strip()
@@ -880,6 +884,8 @@ def op(v):
         return 'in (%s)' % concat('?' * len(v)), v
     if isinstance(v, (tuple,)):                     # (1, 2)
         return 'between ? and ?', v[:2]
+    if isinstance(v, REGEX):                        # re.compile('*ly')
+        return 'regexp ?', (v.pattern,)
     if isinstance(v, ne):                           # ne(1)
         return v()
     if v[:2] in ('<=', '>=', '<>', '!='):           # '<>1'
@@ -919,6 +925,7 @@ def SQL_SELECT(table, *fields, **where):
     x = next(v, ())
     v = next(v, ())
     v = itertools.chain(*v)
+    k = iter(k.split('#')[0] for k in k)
     s = s % (concat(zip(k, x), '`%s` %s', ' and ') or 1)
     return s, tuple(v)
 
@@ -5076,7 +5083,10 @@ def selector(element, s):
                 e = [e[int(s) - 1]]                             # div a:nth-child(2)
             if pseudo.startswith(':not'):
                 s = pseudo[4:].strip('()"\'')
-                e = [e for e in e if e not in element(s)]       # div:not(.main)
+                e = [e for e in e if e in element(s) is False]  # div:not(.main)
+            if pseudo.startswith(':has'):
+                s = pseudo[4:].strip('()"\'')
+                e = [e for e in e if e in element(s) is True ]  # div:not(.main)
             if pseudo.startswith(':contains'):
                 s = pseudo[9:].strip('()"\'')
                 e = (e for e in e if s in e.html.lower())
