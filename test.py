@@ -170,38 +170,69 @@ assert when('day one'                           ) == [u'day one']
 assert when('the day after tomorrow'            ) == [u'the day after tomorrow']
 assert when('the first day of March'            ) == [u'the first day of March']
 
-t = trie({
-    'abc*' : 1, 
-    'xyz'  : 2, 
-    'ij.'  : 3, 
-    '*n'   : 4, 
-    'n?'   : 5, 
-    'q?q'  : 6,
+t1 = trie({
+    'abc ' : 1,
+    'abc*' : 2,
+    'x .'  : 3,
+    '. y'  : 4,
+    'x y'  : 5,
+    'xyz'  : 6,
+    'ij.'  : 7,
+    '*n'   : 8,
+    'n?'   : 9,
+    'q?q'  : 10,
+    '  q'  : 11,
 })
 
-assert len(list(t.search('abc abc', etc='*'   ))) == 2
-assert len(list(t.search('abcd'   , etc='*'   ))) == 1
-assert len(list(t.search('xyz'                ))) == 1
-assert len(list(t.search('xyzz'   , sep=None  ))) == 1
-assert len(list(t.search('xyzz'               ))) == 0
-assert len(list(t.search('ijkk'   , etc='*.'  ))) == 0
-assert len(list(t.search('ijk'    , etc='*.'  ))) == 1
-assert len(list(t.search('nnn'    , etc='*.'  ))) == 1
-assert len(list(t.search('nn'     , etc='*.?' ))) == 2
-assert len(list(t.search('nn n'   , etc='*.'  ))) == 2
-assert len(list(t.search('ijn nm' , etc='*.?' ))) == 3
-assert len(list(t.search('nn n'   , etc='*.?' ))) == 4
-assert len(list(t.search('abcn mn', etc='*.?' ))) == 3
-assert len(list(t.search('abcn'   , etc='*.?' ))) == 2
-assert len(list(t.search('abc*'   , sep=None  ))) == 1
-assert len(list(t.search('abcd'   , sep=None  ))) == 0
-assert len(list(t.search('aijn', 0, etc='*.'  ))) == 2
-assert len(list(t.search('aijn', 0, etc='*.?' ))) == 3
-assert len(list(t.search('nm'  , 0, etc='*.?' ))) == 3 # (debatable)
-assert len(list(t.search('qx'     , etc='*.?' ))) == 0
-assert len(list(t.search('qxq'    , etc='*.?' ))) == 1
-assert len(list(t.search('qyq'    , etc='*.?' ))) == 1
-assert len(list(t.search('qq'     , etc='*.?' ))) == 1
+t2 = trie({
+    'a'    : 1,
+    'a b'  : 2,
+    'a b c': 3,
+    'a b *': 4,
+    'a * *': 5,
+    '* * c': 6,
+    'x* *' : 7.
+})
+
+assert len(list(t1.search('abc d'             ))) == 0 # (debatable)
+assert len(list(t1.search('abc '   , sep=None ))) == 1
+assert len(list(t1.search('abcd'   , etc='*'  ))) == 1
+assert len(list(t1.search('abc abc', etc='*'  ))) == 2
+assert len(list(t1.search('x y'    , etc='*.' ))) == 3
+assert len(list(t1.search('x y'               ))) == 1
+assert len(list(t1.search('xyz'               ))) == 1
+assert len(list(t1.search('xyzz'   , sep=None ))) == 1
+assert len(list(t1.search('xyzz'              ))) == 0
+assert len(list(t1.search('ijkk'   , etc='*.' ))) == 0
+assert len(list(t1.search('ijk'    , etc='*.' ))) == 1
+assert len(list(t1.search('nnn'    , etc='*.' ))) == 1
+assert len(list(t1.search('nn'     , etc='*.?'))) == 2
+assert len(list(t1.search('nn n'   , etc='*.' ))) == 2
+assert len(list(t1.search('ijn nm' , etc='*.?'))) == 3
+assert len(list(t1.search('nn n'   , etc='*.?'))) == 4
+assert len(list(t1.search('abcn mn', etc='*.?'))) == 3
+assert len(list(t1.search('abcn'   , etc='*.?'))) == 2
+assert len(list(t1.search('abc*'   , sep=None ))) == 1
+assert len(list(t1.search('abcd'   , sep=None ))) == 0
+assert len(list(t1.search('aijn', 0, etc='*.' ))) == 2
+assert len(list(t1.search('aijn', 0, etc='*.?'))) == 3
+assert len(list(t1.search('nm'  , 0, etc='*.?'))) == 3 # (debatable)
+assert len(list(t1.search('qx'     , etc='*.?'))) == 0
+assert len(list(t1.search('qxq'    , etc='*.?'))) == 1
+assert len(list(t1.search('qyq'    , etc='*.?'))) == 1
+assert len(list(t1.search('  q'               ))) == 1
+assert len(list(t1.search('  qq', 0, etc='*.?'))) == 2
+assert len(list(t1.search('qq'     , etc='*.?'))) == 1
+
+assert len(list(t2.search('a a a'             ))) == 3
+assert len(list(t2.search('a b c'             ))) == 3
+assert len(list(t2.search('a b _'  , etc='*.?'))) == 4
+assert len(list(t2.search('a b c'  , etc='*.?'))) == 6
+assert len(list(t2.search('b b c'  , etc='*.?'))) == 1
+assert len(list(t2.search('a c _'  , etc='*.?'))) == 2
+assert len(list(t2.search('x y'    , etc='*.?'))) == 1
+assert len(list(t2.search('xx y'   , etc='*.?'))) == 1
+assert len(list(t2.search('yx x'   , etc='*.?'))) == 0
 
 assert subs([0, 3, 'cats', 1], [0, 2, 'cat', 1 ]) == True
 

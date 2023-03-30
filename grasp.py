@@ -835,7 +835,7 @@ class Database(object):
         return self('select last_insert_rowid()').fetchone()[0]
 
     def find1(self, *args, **kwargs):
-        return next(self.find(*args, **kwargs), None)
+        return self.find(*args, **kwargs).fetchone()
 
     def find(self, table, *fields, **filters):
         return self(*SQL_SELECT(table, *fields, **filters))
@@ -2650,7 +2650,7 @@ Match = collections.namedtuple('Match', ('start', 'end', 'word', 'tag'))
 def subs(m1, m2):
     """ Returns True if the first match subsumes (=contains) the second.
     """
-    return m1[0] <= m2[0] and m1[1] >= m2[1]
+    return m1[0] <= m2[0] and m1[1] >= m2[1] and len(m1[2]) > len(m2[2])
 
 # print(subs((0, 11, 'superficial', -1), (0, 5, 'super', +1)))
 
@@ -2679,6 +2679,7 @@ class trie(dict):
         m.pop(x, None) # w/o lookbehind 
 
         for j, c in enumerate(s + ' '): 
+            _ = []
             a = []
             b = not sep    \
                  or sep(c) \
@@ -2686,18 +2687,19 @@ class trie(dict):
 
             for i, n in n:
                 # Find matches:
-                if b and None in n:
+                if b and i < j and None in n:
                     yield Match(i, j, s[i:j], n[None])
-                if b and z in n and None in n[z]:
-                    yield Match(i, j, s[i:j], n[z][None]) # ?
-                if b and x in n and None in n[x]:
-                    yield Match(i, j, s[i:j], n[x][None]) # *
-                    continue
+                if b and i < j and z in n and None in n[z]: # ?
+                    yield Match(i, j, s[i:j], n[z][None])
+                if b and i < j and x in n and None in n[x]: # *
+                    yield Match(i, j, s[i:j], n[x][None])
                 # Find branches:
                 if x in n:
                     a.append((i, {x: n[x]}))  # cat = c*
                 if x in n and c in n[x]:
                     a.append((i, n[x][c]))    # cat = c*t
+                if x in n and c in n[x]:
+                    _.append((i, n[x][c]))    # c t = c *
                 if y in n:
                     a.append((i, n[y]))       # cat = c.t
                 if z in n:
@@ -2706,10 +2708,14 @@ class trie(dict):
                     a.append((i, n[z][c]))    # cat = ca?t
                 if c in n:
                     a.append((i, n[c]))       # cat = cat
+                if c in n:
+                    _.append((i, n[c]))       # c t = c t
             if b:
+                # Find breaks:
                 if sep:
                     a.clear()
-                    a.append((j + 1, self))   # break?
+                    a.extend(_) # (phrases)
+                    a.append((j + 1, self))
                 else:
                     a.append((j + 1, m))
             n = a
@@ -4660,10 +4666,12 @@ def gpt(q, d=1, delay=1, cached=False, timeout=30, key=None):
     }
     r = download(*r, delay=delay, cached=cached, timeout=timeout)
     r = json.loads(u(r))
+    n = r['usage']['total_tokens']
     r = r['choices'][0]
     r = r['message']
     r = r['content']
     r = r.strip()
+  # print(n)
     return r
 
 # q = 'You are a comedian. What is Earth?'
@@ -5006,10 +5014,10 @@ dom = Document
 
 SELECTOR = re.compile(''.join((
     r'^',
-    r'([+<>~])?',                                               # combinator + < >
-    r'(\w+|\*)?',                                               # tag
-    r'((?:[.#][-\w]+)|(?:\[.*?\]))?',                           # attributes # . [=]
-    r'(\:first-child|\:(?:nth-child|not|contains)\(.*?\))?',    # pseudo :
+    r'([+<>~])?',                                                 # combinator + < >
+    r'(\w+|\*)?',                                                 # tag
+    r'((?:[.#][-\w]+)|(?:\[.*?\]))?',                             # attributes # . [=]
+    r'(\:first-child|\:(?:nth-child|not|contains)\(.*?\))?',      # pseudo :
     r'$'
 )))
 
@@ -5021,29 +5029,29 @@ def selector(element, s):
     """
     m = []
     s = s.strip()
-    s = s.lower()                                               # case-insensitive
+    s = s.lower()                                                 # case-insensitive
     s = re.sub(r'\s+', ' ', s)
     s = re.sub(r'([,+<>~])\s', '\\1', s)
     s = s or '<>'
 
-    for s in s.split(','):                                      # div, a
+    for s in s.split(','):                                        # div, a
         e = [element]
-        for s in re.split(r' (?![^\[\(]*[\]\)])', s):           # div a[class="x y"]
+        for s in re.split(r' (?![^\[\(]*[\]\)])', s):             # div a[class="x y"]
 
             try:
                 combinator, tag, a, pseudo = \
                     SELECTOR.search(s).groups('')
             except: 
                 return []
-            tag = tag or '*'                                    # *
+            tag = tag or '*'                                      # *
 
-            if not a:                                           # a
+            if not a:                                             # a
                 a = {}
-            elif a.startswith('#'):                             # a#id
+            elif a.startswith('#'):                               # a#id
                 a = {   'id': re.compile(        a[1:], re.I)}
-            elif a.startswith('.'):                             # a.class
+            elif a.startswith('.'):                               # a.class
                 a = {'class': re.compile(CLASS % a[1:], re.I)}
-            elif a.startswith('['):                             # a[href]
+            elif a.startswith('['):                               # a[href]
                 a = a.strip('[]')
                 a = a.replace('"', '')
                 a = a.replace("'", '')
@@ -5051,46 +5059,46 @@ def selector(element, s):
                 k, op, v = (re.split(r'([\^\$\*]?=)', a, 1) + ['=', r'.*'])[:3]
 
                 if op ==  '=':
-                    a = {k: re.compile(r'^%s$' % v, re.I)}      # a[href="https://textgain.com"]
+                    a = {k: re.compile(r'^%s$' % v, re.I)}        # a[href="https://textgain.com"]
                 if op == '^=':
-                    a = {k: re.compile(r'^%s'  % v, re.I)}      # a[href^="https"]
+                    a = {k: re.compile(r'^%s'  % v, re.I)}        # a[href^="https"]
                 if op == '$=':
-                    a = {k: re.compile(r'%s$'  % v, re.I)}      # a[href$=".com"]
+                    a = {k: re.compile(r'%s$'  % v, re.I)}        # a[href$=".com"]
                 if op == '*=':
-                    a = {k: re.compile(r'%s'   % v, re.I)}      # a[href*="textgain"]
+                    a = {k: re.compile(r'%s'   % v, re.I)}        # a[href*="textgain"]
 
             if combinator == '':
                 e = (e.find(tag, a) for e in e)
-                e = list(itertools.chain(*e))                   # div a
+                e = list(itertools.chain(*e))                     # div a
             if combinator == '>':
                 e = (e.find(tag, a, 1) for e in e)
-                e = list(itertools.chain(*e))                   # div > a
+                e = list(itertools.chain(*e))                     # div > a
             if combinator == '<':
-                e = [e for e in e if any(e.find(tag, a, 1))]    # div < a
+                e = [e for e in e if any(e.find(tag, a, 1))]      # div < a
             if combinator == '+':
                 e = map(lambda e: e.next, e)
-                e = [e for e in e if e and e.match(tag, a)]     # div + a
+                e = [e for e in e if e and e.match(tag, a)]       # div + a
             if combinator == '~':
                 e = map(lambda e: e.successors, e)
                 e = (e for e in e for e in e if e.match(tag, a))
-                e = list(unique(e))                             # div ~ a
+                e = list(unique(e))                               # div ~ a
 
             if pseudo.startswith(':first-child'):
                 e = (e for e in e if not e.previous)
-                e = list(unique(e))                             # div a:first-child
+                e = list(unique(e))                               # div a:first-child
             if pseudo.startswith(':nth-child'):
                 s = pseudo[10:].strip('()"\'')
-                e = [e[int(s) - 1]]                             # div a:nth-child(2)
+                e = [e[int(s) - 1]]                               # div a:nth-child(2)
             if pseudo.startswith(':not'):
                 s = pseudo[4:].strip('()"\'')
-                e = [e for e in e if e in element(s) is False]  # div:not(.main)
+                e = [e for e in e if (e in element(s)) is False]  # div:not(.main)
             if pseudo.startswith(':has'):
                 s = pseudo[4:].strip('()"\'')
-                e = [e for e in e if e in element(s) is True ]  # div:not(.main)
+                e = [e for e in e if (e in element(s)) is True ]  # div:has(.main)
             if pseudo.startswith(':contains'):
                 s = pseudo[9:].strip('()"\'')
                 e = (e for e in e if s in e.html.lower())
-                e = list(unique(e))                             # div:contains("hello")
+                e = list(unique(e))                               # div:contains("hello")
 
         m.extend(e)
     return m
