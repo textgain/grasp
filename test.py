@@ -2,6 +2,19 @@
 
 from grasp import *
 
+#---- ETC -----------------------------------------------------------------------------------------
+
+a = [1, 2, 3, 4, 4]
+
+assert list( first(2, iter(a)                  )) == [1, 2]
+assert list(   sliced(iter(a)            , 0, 2)) == [1, 2]
+assert list(   sliced(iter(a)         , 0, 3, 2)) == [1, 3]
+assert list(   unique(iter(a)                  )) == [1, 2, 3, 4]
+assert list(   chunks(iter(a)               , 2)) == [(1, 2), (3, 4)]
+assert list(    nwise(iter(a)               , 2)) == [(1, 2), (2, 3), (3, 4), (4, 4)]
+
+#---- ML ------------------------------------------------------------------------------------------
+
 v1 = {'x': 1, 'y': 2}
 v2 = {'x': 3, 'y': 4}
 v3 = {'x': 5, 'y': 6}
@@ -16,14 +29,49 @@ assert round(      knn(v1, (v2, v3))[0][0]   , 2) == 0.98
 assert             knn(v1, (v2, v3))[0][1]        ==  v2
 assert  list(   reduce(v1, 'y').keys()          ) == ['x']
 assert          sparse(v4)                        == {'x': 7}
+assert    binary(scale(v1, 0, 1))                 == {'x': 0, 'y': 1}
 assert              tf(v4)                        == {'x': 1, 'y': 0}
 assert       centroid((v1, v2))                   == {'x': 2, 'y': 3}
 assert       features((v1, v2))                   == set(('x', 'y'))
 assert next(iter(tfidf((v1, v2))))['x']           == 0.25
 assert       majority([1, 1, 2])                  == 1
 
-assert scan(u'Here, kitty kitty!'               ) == [4, 17]
-assert scan(u'Here, kitty!'                     ) == [4, 11]
+#---- NLP -----------------------------------------------------------------------------------------
+
+assert similarity('cat', 'can', f=chngrams, n=2 ) == 0.5
+assert similarity('cat', 'can', f=chngrams, n=1 ) == 2/3.
+
+assert readability('the cat sat on the mat'     ) == 1.0
+assert readability('felis silvestris catus'     ) == 0.0
+
+assert collapse(u'a    b  c'                    ) == u'a b c'
+assert cap     (u'cat. cat.'                    ) == u'Cat. Cat.'
+assert sep     (u"'a's b, c (d).'"              ) == u"'a 's b , c ( d ) . '"
+assert encode  (u'<a> & <b>'                    ) == u'&lt;a&gt; &amp; &lt;b&gt;'
+assert decode  (u'&lt;a&gt; &amp; &lt;b&gt;'    ) == u'<a> & <b>'
+assert decode  (u'http://google.com?q=%22x%22'  ) == u'http://google.com?q="x"'
+assert decode  (u'decode("%22") = "%22"'        ) == u'decode("%22") = "%22"'
+assert detag   (u'<a>b</a>\nc'                  ) == u'b\nc'
+assert detag   (u'<a>a</a>&<b>b</b>'            ) == u'a&b'
+assert destress(u'pâté'                         ) == u'pate'
+assert deflood (u'Woooooow!!!!!!'         , n=3 ) == u'Wooow!!!'
+assert decamel (u'HTTPError404NotFound'         ) == u'http_error_404_not_found'
+assert sg      (u'cats'                         ) == u'cat'
+assert sg      (u'mice'                         ) == u'mouse'
+assert sg      (u'pussies'                      ) == u'pussy'
+assert sg      (u'cheeses'                      ) == u'cheese'
+
+assert top(lang(u'The cat is snoring'       ))[0] == 'en'
+assert top(lang(u'De kat is aan het snurken'))[0] == 'nl'
+
+assert top(loc( u'Cats conquered Paris'))[0].city == 'Paris'
+
+assert hilite  (u'a b', {'a': 1.0}              ) == '<mark style="background: #ff0f;">a</mark> b'
+
+assert scan(    u'Here, kitty kitty!'           ) == [4, 17]
+assert scan(    u'Here, kitty!'                 ) == [4, 11]
+
+#---- NLP -----------------------------------------------------------------------------------------
 
 assert tokenize(u'(hello) (:'                   ) == u'( hello ) (:'
 assert tokenize(u'References [123] (...) :-)'   ) == u'References [123] (...) :-)'
@@ -85,11 +133,15 @@ assert   list( constituents(s1))[1][1]            == u'VP'
 assert   list( constituents(s1))[2][1]            == u'NP'
 assert   list( constituents(s1))[3][1]            == u''
 
+#---- ML ------------------------------------------------------------------------------------------
+
 assert list(  chngrams('cats', 2))                == ['ca', 'at', 'ts']
 assert list(    ngrams(('cats', '&', 'dogs'), 2)) == [('cats', '&'), ('&', 'dogs')]
 assert list(    ngrams('cats & dogs', 2))         == [('cats', '&'), ('&', 'dogs')]
 assert list( skipgrams('cats & dogs', 1))         == [('cats', ('&',)), ('&', ('cats', 'dogs')), 
                                                       ('dogs', ('&',))]
+
+#---- WWW -----------------------------------------------------------------------------------------
 
 e1 = DOM('<div id="main"><div class="story"><p>1</p><p>2</p></div</div>')
 e2 = DOM('<div><a href="http://www.site.com">x</a></div>')
@@ -122,30 +174,7 @@ assert plaintext(u'<a>b</a>\nc'                 ) == u'b c'
 assert plaintext('<a>b </a>c'                   ) == u'b c'
 assert plaintext('<p>b </p>c'                   ) == u'b\n\nc'
 
-assert similarity('cat', 'can', f=chngrams, n=2 ) == 0.5
-assert similarity('cat', 'can', f=chngrams, n=1 ) == 2/3.
-
-assert readability('the cat sat on the mat'     ) == 1.0
-assert readability('felis silvestris catus'     ) == 0.0
-
-assert collapse(u'a    b  c'                    ) == u'a b c'
-assert cap     (u'cat. cat.'                    ) == u'Cat. Cat.'
-assert sep     (u"'a's b, c (d).'"              ) == u"'a 's b , c ( d ) . '"
-assert encode  (u'<a> & <b>'                    ) == u'&lt;a&gt; &amp; &lt;b&gt;'
-assert decode  (u'&lt;a&gt; &amp; &lt;b&gt;'    ) == u'<a> & <b>'
-assert decode  (u'http://google.com?q=%22x%22'  ) == u'http://google.com?q="x"'
-assert decode  (u'decode("%22") = "%22"'        ) == u'decode("%22") = "%22"'
-assert detag   (u'<a>b</a>\nc'                  ) == u'b\nc'
-assert detag   (u'<a>a</a>&<b>b</b>'            ) == u'a&b'
-assert destress(u'pâté'                         ) == u'pate'
-assert deflood (u'Woooooow!!!!!!'         , n=3 ) == u'Wooow!!!'
-assert decamel (u'HTTPError404NotFound'         ) == u'http_error_404_not_found'
-assert sg      (u'cats'                         ) == u'cat'
-assert sg      (u'mice'                         ) == u'mouse'
-assert sg      (u'pussies'                      ) == u'pussy'
-assert sg      (u'cheeses'                      ) == u'cheese'
-
-assert hilite  ('a b', {'a': 1.0}               ) == '<mark style="background: #ff0f;">a</mark> b'
+#---- ETC -----------------------------------------------------------------------------------------
 
 assert u(date(0                                )) == u'1970-01-01 01:00:00'
 assert u(date(2000, 12, 31                     )) == u'2000-12-31 00:00:00'
@@ -170,6 +199,8 @@ assert when('day one'                           ) == [u'day one']
 assert when('the day after tomorrow'            ) == [u'the day after tomorrow']
 assert when('the first day of March'            ) == [u'the first day of March']
 
+#---- NLP -----------------------------------------------------------------------------------------
+
 t1 = trie({
     'abc ' : 1,
     'abc*' : 2,
@@ -191,7 +222,12 @@ t2 = trie({
     'a b *': 4,
     'a * *': 5,
     '* * c': 6,
-    'x* *' : 7.
+    'x* *' : 7,
+    'y. *' : 8,
+    'y ..' : 9,
+    'y .?' : 10,
+    'z ?.' : 11,
+    ''     : 12,
 })
 
 assert len(list(t1.search('abc d'             ))) == 0 # (debatable)
@@ -232,11 +268,39 @@ assert len(list(t2.search('b b c'  , etc='*.?'))) == 1
 assert len(list(t2.search('a c _'  , etc='*.?'))) == 2
 assert len(list(t2.search('x y'    , etc='*.?'))) == 1
 assert len(list(t2.search('xx y'   , etc='*.?'))) == 1
-assert len(list(t2.search('yx x'   , etc='*.?'))) == 0
+assert len(list(t2.search('yx x'   , etc='*.?'))) == 1
+assert len(list(t2.search('y x'    , etc='*.?'))) == 1
+assert len(list(t2.search('y xx'   , etc='*.?'))) == 2
+assert len(list(t2.search('y xxx'  , etc='*.?'))) == 0
+assert len(list(t2.search('z x'    , etc='*.?'))) == 0 # bug! (#11)
+assert len(list(t2.search('zx x'   , etc='*.?'))) == 0
 
 assert subs([0, 3, 'cats', 1], [0, 2, 'cat', 1 ]) == True
 
-assert top( lang('The cat is snoring'       ))[0] == 'en'
-assert top( lang('De kat is aan het snurken'))[0] == 'nl'
+#---- NET -----------------------------------------------------------------------------------------
 
-assert top(  loc('Cats conquered Paris'))[0].city == 'Paris'
+g = Graph(
+    directed  =True,
+    adjacency = {
+        1: {2: 1.0}, 
+        2: {3: 1.0}, 
+        3: {4: 1.0},
+        1: {4: 1.0}
+    }
+)
+
+assert            nodes(g                   )     == {1, 2, 3, 4}
+assert           leaves(g                   )     == {1, 2}
+assert               sp(g             , 2, 4)     == (2, 3, 4)
+assert top( betweenness(g                   ))[0] == 3
+assert top(    pagerank(g                   ))[0] == 4
+
+#---- ETC -----------------------------------------------------------------------------------------
+
+try:
+    loc = {r[0]: r for r in csv(next(ls('en-loc.csv')))}
+
+    assert loc['BE'][1] == 'Belgium'
+    assert loc['BE'][2] == 'Belgian'
+except:
+    pass

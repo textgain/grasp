@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.6'
+__version__   =  '2.7'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -501,6 +501,7 @@ def unique(a):
 def chunks(a, n=2):
     """ Returns an iterator of tuples of n consecutive values.
     """
+    a = list(a)
     return iter(zip(*(a[i::n] for i in range(n))))
 
 # for v in chunks([1, 2, 3, 4], n=2): # (1, 2), (3, 4)
@@ -878,6 +879,8 @@ def op(v):
         v = v.replace('%', '\%')
         v = v.replace('*',  '%')
         return v
+    if v is None:
+        return 'is null',
     if isinstance(v, (int, float)):                 #  1
         return '= ?', (v,)
     if isinstance(v, (set, list)):                  # [1, 2, 3]
@@ -2723,6 +2726,8 @@ class trie(dict):
 # print(list(trie({'wow': +0.5, 'wtf': -0.5}).search('oh wow!')))
 
 # print(list(trie({'cat*': True}).search('catnip cat', etc='*')))
+
+# print(list(trie({'cat *': True}).search('cat fancy', etc='*')))
 
 #---- TEXT MARKUP ---------------------------------------------------------------------------------
 
@@ -5969,13 +5974,15 @@ def shortest_path(g, n1, n2):
     except StopIteration:
         return None
 
+sp = shortest_path
+
 # g = {
 #     'a': {'b': 1, 'x': 1},  # A -> B -> C -> D
 #     'b': {'c': 1},          #   –> X ––––––>
 #     'c': {'d': 1},
 #     'x': {'d': 1}
 # }
-# print(shortest_path(g, 'a', 'd'))
+# print(sp(g, 'a', 'd'))
 
 def betweenness(g, k=1000):
     """ Returns a dict of node id's and their centrality score (0.0-1.0),
