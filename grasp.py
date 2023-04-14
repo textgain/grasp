@@ -880,7 +880,7 @@ def op(v):
         v = v.replace('*',  '%')
         return v
     if v is None:
-        return 'is null',
+        return 'is null', ()
     if isinstance(v, (int, float)):                 #  1
         return '= ?', (v,)
     if isinstance(v, (set, list)):                  # [1, 2, 3]
@@ -889,7 +889,7 @@ def op(v):
         return 'between ? and ?', v[:2]
     if isinstance(v, REGEX):                        # re.compile('*ly')
         return 'regexp ?', (v.pattern,)
-    if isinstance(v, ne):                           # ne(1)
+    if isinstance(v, Op):                           # ne(1)
         return v()
     if v[:2] in ('<=', '>=', '<>', '!='):           # '<>1'
         return '%s ?' % v[:2], (v[2:],)
@@ -900,17 +900,40 @@ def op(v):
     else:
         return '= ?', (v,)
 
-class ne(object):
+class Op(object):
     def __init__(self, v):
         self.v = v
     def __call__(self):
+        return '= ?' , (self.v,)
+class gt(Op):
+    def __call__(self):
+        return '> ?' , (self.v,)
+class lt(Op):
+    def __call__(self):
+        return '< ?' , (self.v,)
+class ge(Op):
+    def __call__(self):
+        return '>= ?', (self.v,)
+class le(Op):
+    def __call__(self):
+        return '<= ?', (self.v,)
+
+class ne(Op):
+    def __call__(self):
         s, v = op(self.v)
-        if s[0] in '=<>':                           # ne('<=1')
+        if s[:1] in '=<>':                          # ne('<=1')
             return '!' + s, v
-        if s[0] == '!':                             # ne('!=1')
+        if s[:1] == '!':                            # ne('!=1')
             return 'like ?', '%'
+        if s[:2] == 'is':                           # ne(None)
+            return 'is not' + s[2:], v
         else:                                       # ne((1, 2))
             return 'not ' + s, v
+
+def asc(k):
+    return k, 'asc'
+def desc(k):
+    return k, 'desc'
 
 def SQL_SELECT(table, *fields, **where):
     """ Returns an SQL SELECT statement + parameters.
@@ -5370,7 +5393,7 @@ class Date(datetime.datetime):
 
     @property
     def weekday(self):
-        return self.isocalendar()[2]
+        return self.isocalendar()[2] # Mon = 1
 
     @property
     def timestamp(self):
