@@ -552,11 +552,11 @@ def choices(a, weights=[], k=1):
 # Temporary files are useful when a function takes a filename, but we have the file's data instead.
 
 class tmp(object):
-    
-    def __init__(self, s, mode='wb'):
+
+    def __init__(self, s, mode='w', type=''):
         """ Returns a named temporary file containing the given string.
         """
-        self._f = tempfile.NamedTemporaryFile(mode, delete=False)
+        self._f = tempfile.NamedTemporaryFile(mode, suffix=type, delete=False)
         self._f.write(s)
         self._f.close()
 
@@ -1097,6 +1097,12 @@ def pw_ok(s1, s2):
 ##### ML ##########################################################################################
 
 #---- STATISTICS ----------------------------------------------------------------------------------
+
+def mround(v, m=1):
+    """ Returns the nearest multiple m of v as a float.
+    """
+    m = float(m)
+    return round(v / m) * m
 
 def avg(a):
     """ Returns the average (mean) of the given values.
@@ -3025,13 +3031,13 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
           (r'                              na$' , 'non'    ),
           (r'                               a$' , 'um'     ),
           (r'                               i$' , 'us'     ),
-          (r'                              ae$' , 'a'      ), 
+          (r'                              ae$' , 'a'      ),
           (r'           (l|ar|ea|ie|oa|oo)ves$' , '\\1f'   ),  # -ves  +1%
           (r'                     (l|n|w)ives$' , '\\1ife' ),
           (r'                 ^([^g])(oe|ie)s$' , '\\1\\2' ),  # -ies  +5%
           (r'                  (^ser|spec)ies$' , '\\1ies' ),
           (r'(eb|gp|ix|ipp|mb|ok|ov|rd|wn)ies$' , '\\1ie'  ),
-          (r'                             ies$' , 'y'      ), 
+          (r'                             ies$' , 'y'      ),
           (r'    ([^rw]i|[^eo]a|^a|lan|y)ches$' , '\\1che' ),  # -es   +5%
           (r'  ([^c]ho|fo|th|ph|(a|e|xc)us)es$' , '\\1e'   ),
           (r'([^o]us|ias|ss|sh|zz|ch|h|o|x)es$' , '\\1'    ),
@@ -3041,6 +3047,31 @@ def sg(w, language='en', known={'aunties': 'auntie'}):
     return w                                                   #       +1%
 
 # print(sg('avalanches')) # avalanche
+
+def pl(w, language='en', known={}):
+    """ Returns the plural of the given singular noun.
+    """
+    if w in known: 
+        return known[w]
+    if language == 'en':
+        for sg, pl in (                                        # ± 98% accurate (CELEX)
+          (r'                            foot$' , 'feet'   ),
+          (r'                           tooth$' , 'teeth'  ),
+          (r'                          person$' , 'people' ),
+          (r'                      (?<!hu)man$' , 'men'    ),
+          (r'                         (child)$' , '\\1ren' ),
+          (r'                       (l|m)ouse$' , '\\ice'  ),
+          (r'                (ch|sh|ss|s|x|z)$' , '\\1es'  ),  # -es   +4%
+          (r'                            (l)f$' , '\\1ves' ),  # -ves
+          (r'                        ([^f])fe$' , '\\1ves' ),  # -ves
+          (r'                     ([^aeiou])y$' , '\\1ies' ),  # -ies
+          (r'                           (ism)$' , '\\1'    ),
+          (r'                                $' , 's'      )): # -s    +94%
+            if re.search(r'(?i)' + sg.strip(), w):
+                return re.sub(r'(?i)' + sg.strip(), pl, w)
+    return w
+
+# print(pl('avalanche')) # avalanches
 
 @static(m=None)
 def lang(s, confidence=0.1):
@@ -4353,7 +4384,7 @@ def annotate(path, delay=1, key=None):
 
 setattr(google, 'annotate', annotate)
 
-# with tmp(download('http://goo.gl/5GTvTe')) as f:
+# with tmp(download('http://goo.gl/5GTvTe'), 'wb') as f:
 #     print(google.annotate(f.name, key='***'))
 
 #---- TWITTER -------------------------------------------------------------------------------------
@@ -5408,6 +5439,9 @@ class Date(datetime.datetime):
     def __int__(self):
         return self.timestamp.__int__()
 
+    def __float__(self):
+        return self.timestamp
+
     def __add__(self, t):
         return date(datetime.datetime.__add__(self, 
                     datetime.timedelta(seconds=t) if type(t) in (int, float) else t))
@@ -5465,6 +5499,44 @@ def tz(d):
         return date(d.replace(tzinfo=datetime.timezone.utc))
     else:
         return date(d)
+
+def timeline(a, n=10, date=lambda v: v, since=None, until=None):
+    """ Returns an ordered dict of n lists distributed by date.
+    """
+    m = collections.OrderedDict()
+    n = round(n)
+    a = list(a)
+    t = list(map(date, a))
+    a = zip(t, a)
+    x = min(t)
+    y = max(t)
+    x = float(since or x)
+    y = float(until or y)
+    d = float(y - x) / (n - 1 or 1) # interval
+    # Binning:
+    if n <= 0:
+        a = []
+    if n == 1:
+        d = x
+    for i in range(n):
+        t = x + i * d
+        t = Date.fromtimestamp(t)
+        m[t] = []
+    for t, v in a:
+        t = x + mround(float(t) - x, d)
+        t = Date.fromtimestamp(t)
+        m[t].append(v)
+    return m
+
+tl = timeline
+
+# a = (
+#     date(2023,  1, 1),
+#     date(2023,  1, 2),
+#     date(2023,  1, 3),
+# )
+# for k, v in tl(a, n=2.6).items():
+#     print(k, len(v))
 
 #---- DATE IN TEXT --------------------------------------------------------------------------------
 
@@ -5897,7 +5969,8 @@ def _lazy_state(r):
     try:
         v = r._state
     except:
-        v = r._state = r.app and r.app.state() or {}
+        v = r._state = r.app.state() \
+                    if r.app else {}
     return v
 
 HTTPRequest.session = \
