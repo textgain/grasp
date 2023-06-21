@@ -2,7 +2,7 @@
 
 ##### SVG.PY ######################################################################################
 
-__version__   =  '1.3'
+__version__   =  '1.4'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw']
 __email__     =  'info@textgain.com'
@@ -39,6 +39,8 @@ __copyright__ =  'Textgain'
 # geometry (e.g., distance, angle, tangent, bounds) and transformation (e.g., rotate, scale).
 
 import sys
+import os
+import io
 import inspect
 import colorsys
 import codecs
@@ -50,6 +52,7 @@ import base64
 import struct
 import random; _random=random
 import math
+import time
 import operator
 
 PY2 = sys.version.startswith('2')
@@ -60,18 +63,21 @@ def data_uri(path, default='application/octet-stream'):
     """ Returns the data URI string for the given file.
     """
     type = mimetypes.guess_type(path)[0] or default
-    s = open(path, 'rb').read()
+
+    s = open(path, 'rb')
+    s = s.read()
     s = base64.b64encode(s)
     s = s.decode('utf-8')
     s = 'data:%s;base64,%s' % (type, s)
     return s
 
-def sha(s):
+def sha(s, n=16):
     """ Returns the crypytographic hash of the string.
     """
     s = s.encode('utf-8')
     s = hashlib.sha256(s)
     s = s.hexdigest()
+    s = s[:n]
     return s
 
 #---- GEOMETRY ------------------------------------------------------------------------------------
@@ -81,7 +87,7 @@ from math import sqrt, atan2, cos, sin, degrees, radians
 def angle(x0, y0, x1, y1):
     """ Returns the angle between two points.
     """
-    return degrees(atan2(y1 - y0, x1 - x0))
+    return degrees(atan2(y1 - y0, x1 - x0)) # CCW
 
 def distance(x0, y0, x1, y1):
     """ Returns the distance between two points.
@@ -473,10 +479,12 @@ class Color(object):
         if k.get('mode') == HSB:                         # Color(h, s, b, a, mode=HSB)
             r, g, b = colorsys.hsv_to_rgb(r, g, b)
 
-        self.r = float(r)
-        self.g = float(g)
-        self.b = float(b)
-        self.a = float(a)
+        n = k.get('base', 1)
+
+        self.r = float(r) / n
+        self.g = float(g) / n
+        self.b = float(b) / n
+        self.a = float(a) / n
 
     def __eq__(self, clr):
         return self.rgba == clr.rgba
@@ -557,15 +565,20 @@ def complement(clr):
     """
     return clr.rotate(180)
 
-def adjust(clr, h=None, s=None, b=None, a=None, op='+'):
+def adjust(clr, h=None, s=None, b=None, a=None, contrast=1.0, op='+'):
     """ Returns the adjusted color.
     """
-    if op == '+':
-        hsba = (0.0 if v is None else v for v in (h, s, b, a))
-    if op == '*':
-        hsba = (1.0 if v is None else v for v in (h, s, b, a))
-
-    return Color(*(clamp(ops.get(op)(v1, v2)) for v1, v2 in zip(clr.hsba, hsba)), mode=HSB)
+    # 1) Adjust coloring:
+    clr = zip(clr.hsba, (h, s, b, a))
+    clr = map(lambda v: v[0] if v[1] is None else ops[op](*v), clr)
+    clr = map(clamp, clr)
+    clr = Color(*clr, mode=HSB)
+    # 2) Adjust contrast:
+    clr = zip(clr.rgba, (contrast, contrast, contrast, 1))
+    clr = map(lambda v: v[0] * v[1] - v[1] * 0.5 + 0.5, clr)
+    clr = map(clamp, clr)
+    clr = Color(*clr, mode=RGB)
+    return clr
 
 def mix(t, clr1, clr2, **k):
     """ Returns the interpolated color between the given colors at t (0.0-1.0).
@@ -574,10 +587,11 @@ def mix(t, clr1, clr2, **k):
 
 class Gradient(list):
 
-    def __init__(self, clr1, clr2, *clr3):
+    def __init__(self, clr1, clr2, *clr3, angle=0):
         """ A smooth transition between the given colors.
         """
-        list.__init__(self, (clr1, clr2) + clr3)
+        self.extend((clr1, clr2) + clr3)
+        self.angle = angle
 
     def __call__(self, n=100):
         """ Returns an iterator of n interpolated colors.
@@ -601,6 +615,20 @@ class Gradient(list):
         i = int(t[0])
         t = n * t[1]
         return mix(t, self[i], self[i+1])
+
+    def __str__(self):
+        n = len(self)
+        n = float(n) - 1
+        s = '<linearGradient gradientTransform="rotate(%.1f 0.5 0.5)">\n' % self.angle
+        for i, clr in enumerate(self):
+            s += '<stop offset="%.2f"' % (i / n)
+            s += ' stop-color="%s" />' % clr
+            s += '\n'
+        s += '</linearGradient>\n'
+        return s
+
+    def __repr__(self):
+        return 'Gradient(%s)' % tuple(self)
 
 def mono(clr):
     """ Returns a monochromatic gradient.
@@ -996,7 +1024,123 @@ def filters(*f):
     s = Filter(s)
     return s
 
-# text('hi!', 0, 0, filter=dropshadow())
+shadow = dropshadow
+
+# text('hi!', 0, 0, filter=shadow())
+
+#---- PIXELS --------------------------------------------------------------------------------------
+# The Pixels object can be used for image compositing.
+
+def rgba(clr, base=255):
+    """ Returns (R,G,B,A) values between 0-255.
+    """
+    return tuple(int(v * base) for v in clr)
+
+class Pixels(list):
+
+    def __init__(self, f, width=None, height=None):
+        """ A Color matrix for the given image.
+        """
+        from PIL import Image
+
+        w = width
+        h = height
+
+        if f is None:
+            f = TRANSPARENT
+        if isinstance(f, bytes):
+            g = Image.open(io.BytesIO(f))
+        if isinstance(f, unicode):
+            g = Image.open(f)
+        if isinstance(f, Color):
+            g = Image.new('RGBA', (width, height), rgba(f))
+        if isinstance(f, Pixels):
+            g = f._g.copy()
+        if isinstance(f, Image.Image):
+            g = f
+        if 'A' not in g.mode: # RGB
+            g.putalpha(255)
+        if w is None:
+            w = g.width
+        if h is None:
+            h = g.height
+        if h != g.height or \
+           w != g.width:
+            g = g.resize((w, h))
+
+        self._g = g
+        self._p = g.load()
+
+    @property
+    def data(self):
+        s = io.BytesIO(); self._g.save(s, 'png')
+        s = s.getvalue()
+        return s
+
+    @property
+    def width(self):
+        return self._g.width
+
+    @property
+    def height(self):
+        return self._g.height
+
+    def __getitem__(self, ij):
+        return Color(self._p[ij], base=255)
+
+    def __setitem__(self, ij, clr):
+        self._p[ij] = rgba(clr)
+
+    def get(self, x, y, width, height):
+        """ Gets the Pixels from rectangular selection.
+        """
+        return Pixels(self._g.crop((x, y, x + width, y + height)))
+
+    def put(self, f, x=0, y=0, width=None, height=None):
+        """ Puts the Pixels on top at position (x, y).
+        """
+        g = Pixels(f, width, height)
+        g = g._g
+        self._g.paste(g, (x, y), mask=g) # alpha blend 
+
+    def flip(self, axis='horizontal'):
+        self._g = self._g.transpose(axis == 'vertical')
+        self._p = self._g.load()
+
+    def rotate(self, angle=0):
+        self._g = self._g.rotate(-angle) # clockwise
+        self._p = self._g.load()
+
+    def save(self, f=None, **k):
+        if not f:
+            f = self._g.filename
+        if not f[-4:] == '.png':
+            g = self._g.convert('RGB')
+        else:
+            g = self._g
+
+        g.save(f, **k)
+
+def preview(pixels):
+    pixels._g.show()
+
+def process(*pixels):
+    """ Returns an iterator of (i, j, clr1, clr2, ...),
+        for given Pixels1, Pixels2, ... (of same size).
+    """
+    w = min(p.width  for p in pixels)
+    h = min(p.height for p in pixels)
+
+    for i in range(w):
+        for j in range(h):
+            yield (i, j) + tuple(p[i,j] for p in pixels)
+
+# p = Pixels('cat.png')
+#
+# for i, j, clr in process(p):
+#     p[i,j] = adjust(clr, s=-1) # desaturate
+#
+# p.save()
 
 #---- CONTEXT -------------------------------------------------------------------------------------
 
@@ -1016,16 +1160,16 @@ NONZERO = 'nonzero'
 EVENODD = 'evenodd'
 
 attributes = {
-    'id'          : ('id'               , '%s'      ),
-    'type'        : ('class'            , '%s'      ),
-    'fill'        : ('fill'             , '%s'      ),
-    'stroke'      : ('stroke'           , '%s'      ),
-    'strokewidth' : ('stroke-width'     , '%.1f'    ),
-    'strokestyle' : ('stroke-dasharray' , '%s'      ),
-    'font'        : ('font-family'      , '%s'      ),
-    'fontsize'    : ('font-size'        , '%.0fpx'  ),
-    'fontweight'  : ('font-weight'      , '%s'      ),
-    'filter'      : ('filter'           , 'url(#%s)'),
+    'id'          : ('id'               , '%s'     ),
+    'type'        : ('class'            , '%s'     ),
+    'fill'        : ('fill'             , '%s'     ),
+    'stroke'      : ('stroke'           , '%s'     ),
+    'strokewidth' : ('stroke-width'     , '%.1f'   ),
+    'strokestyle' : ('stroke-dasharray' , '%s'     ),
+    'font'        : ('font-family'      , '%s'     ),
+    'fontsize'    : ('font-size'        , '%.0fpx' ),
+    'fontweight'  : ('font-weight'      , '%s'     ),
+    'filter'      : ('filter'           , '%s'     ),
 }
 
 def serialize(**attrs):
@@ -1033,9 +1177,9 @@ def serialize(**attrs):
     """
     a = []
     for k, v in attrs.items():
-        if k == 'fill'   and not isinstance(v, Color):
+        if k == 'fill'   and not isinstance(v, (Color, str)):
             v = Color(v)
-        if k == 'stroke' and not isinstance(v, Color):
+        if k == 'stroke' and not isinstance(v, (Color, str)):
             v = Color(v)
         if k == 'strokestyle':
             v = ' '.join(map(str, v))
@@ -1050,22 +1194,31 @@ def serialize(**attrs):
 def mixin(s, ctx=None, **attrs):
     """ Returns the XML element with the attributes mixed in.
     """
-    if attrs.get('filter') and ctx is not None:
-        f = attrs['filter']
-        k = sha(f)[:16]
-        k = 'filter-' + k
-        f = mixin(f, id=k)  # '<filter id="x">'
-        ctx._defs[k] = f
-        attrs['filter'] = k # 'filter="url(#x)"'
+    for k, v in attrs.items():
+        if not isinstance(v, (Gradient, Filter)):
+            continue
+        if isinstance(v, Gradient):
+            u = 'g-'
+        if isinstance(v, Filter):
+            u = 'f-'
+
+        v = unicode(v)
+        u = u + sha(v)
+        v = mixin(v, id=u)  # '<filter id="xyz">'
+        u = 'url(#%s)' % u  # 'url(#xyz)'
+        ctx._defs[u] = v
+        attrs[k] = u
 
     if attrs:
-        i = s.find('>')
-        i = i - 1 if i > 0 and s[i-1] == '/' else i # '/>'
-        i = i - 1 if i > 0 and s[i-1] == ' ' else i
-        s = '%s %s%s' % (s[:i], serialize(**attrs), s[i:])
+        m = re.search(r' ?/?>|$', s) # '/>'
+        i = m.start()
+        a = serialize(**attrs)
+        s = '%s %s%s' % (s[:i], a, s[i:])
 
     if attrs.get('link'):
-        s = '<a href="%s">%s</a>' % (encode(attrs['link']), s)
+        v = attrs['link']
+        v = encode(v)
+        s = '<a href="%s">%s</a>' % (v, s)
 
     return s
 
@@ -1253,11 +1406,11 @@ class Context(list):
         return fit(points, curvature)
 
     def beginclip(self, path, winding=NONZERO):
-        id = len(self._defs)
-        p = '<path d="%s" clip-rule="%s" />' % (' '.join(map(str, path)), winding)
-        p = '<clipPath id="%s">%s</clipPath>' % (id, p)
-        s = '<g style="clip-path:url(#%s);">' % (id,)
-        self._defs[id] = p
+        k = 'c-' + str(len(self._defs))
+        p = '<path d="%s" clip-rule="%s" />'  % (' '.join(map(str, path)), winding)
+        p = '<clipPath id="%s">%s</clipPath>' % (k, p)
+        s = '<g style="clip-path:url(#%s);">' % (k,)
+        self._defs[k] = p
         self.append(s)
         self._stack.append(['</g>'])
 
@@ -1306,16 +1459,29 @@ class Context(list):
     def image(self, path, x, y, width=None, height=None, opacity=1.0, **k):
         """ Draws the given image file at x, y.
         """
-        id = 'img-' + sha(path)[:16]
+        # Cache pixel data (file):
+        if isinstance(path, Pixels):
+            f = time.time() * 10e6
+            f = int(f)
+            f = str(f)
+            f = f + '.png'
+            path.save(f)
+            try:
+                self.image(f, x, y, width, height, opacity, **k)
+            finally:
+                os.unlink(f)
+            return
+
+        id = 'i-' + sha(path)
 
         # Cache image data (once):
-        if not path in self._defs:
+        if not id in self._defs:
             w, h = self.imagesize(path)
             s = data_uri(path) # 'data:image/png;base64,...'
             s = '<image id="%s" width="%.0f" height="%.0f" href="%s" />' % (id, w, h, s)
             self._defs[id] = s
-        w = self._defs[id].split(' ', 3)[2][7:-1]
-        h = self._defs[id].split(' ', 4)[3][8:-1]
+        w = self._defs[id].split('"')[3]
+        h = self._defs[id].split('"')[5]
         w = float(w)
         h = float(h)
 
