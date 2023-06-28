@@ -1,3 +1,5 @@
+import os
+
 from setuptools import setup
 
 setup(
@@ -10,7 +12,7 @@ setup(
                    url = 'https://github.com/textgain/grasp',
                scripts = [],
               packages = ['grasp', 'grasp.kb', 'grasp.lm'],
-           package_dir = {'': '..'},
+           package_dir = {'grasp': os.path.dirname(__file__)},
           package_data = {
                     '' : ['*.md', '*.csv', '*.json', '*.js', '*.py'],
             'grasp.kb' : ['*.md', '*.csv', '*.json'],
