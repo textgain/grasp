@@ -9,7 +9,7 @@
 Install and update with [pip](https://pip.pypa.io/en/stable/getting-started):
 
 ```
-$ pip install grasp@git+https://github.com/textgain/grasp
+$ pip install git+https://github.com/textgain/grasp
 ```
 
 ## Tools for Data Mining
