@@ -4,6 +4,14 @@
 
 **Grasp** is developed by [Textgain](https://textgain.com), a language tech company that uses AI for societal good.
 
+## Installation
+
+Install and update with [pip](https://pip.pypa.io/en/stable/getting-started):
+
+```
+$ pip install grasp@git+https://github.com/textgain/grasp
+```
+
 ## Tools for Data Mining
 
 **Download stuff** with `download(url)` (or `dl`), with built-in caching and logging:
