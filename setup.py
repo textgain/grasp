@@ -1,20 +1,22 @@
 from setuptools import setup
 
 setup(
-                  name = 'Grasp',
-               version = '2.0',
+                  name = 'grasp',
+               version = '2.7',
            description = 'Simple NLP toolkit',
                license = 'BSD',
                 author = 'Textgain',
           author_email = 'info@textgain.com',
                    url = 'https://github.com/textgain/grasp',
                scripts = [],
-              packages = [],
+              packages = ['grasp', 'grasp.kb', 'grasp.lm'],
+           package_dir = {'': '..'},
           package_data = {
-                  ''   : ['*.md', '*.csv', '*.json', '*.js', '*.py'],
-                  'kb' : ['*.md', '*.csv', '*.json'],
-                  'lm' : ['*.md', '*.csv', '*.json', '*.zip']},
+                    '' : ['*.md', '*.csv', '*.json', '*.js', '*.py'],
+            'grasp.kb' : ['*.md', '*.csv', '*.json'],
+            'grasp.lm' : ['*.md', '*.csv', '*.json', '*.zip']},
         extras_require = {
+              'matrix' : 'numpy', 
                  'svd' : 'numpy', 
                 'fsel' : 'scipy'},
            classifiers = [
