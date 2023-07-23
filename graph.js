@@ -1,5 +1,7 @@
-// graph.js v2.0.
+// graph.js v3.0.
 // (c) Textgain
+
+// ------------------------------------------------------------------------------------------------
 
 clamp = function(v, min=0.0, max=1.0) {
 	return Math.min(Math.max(v, min), max);
@@ -33,6 +35,8 @@ bounds = function(p=[]) {
 	};
 };
 
+// ------------------------------------------------------------------------------------------------
+
 Graph = function(adj={}) {
 	this.nodes = {};  // {node: Point}
 	this.edges = adj; // {node1: {node2: weight}}
@@ -56,6 +60,8 @@ Graph.prototype.add = function(n1, n2, weight=1.0) {
 		 this.edges[n1][n2] = weight;
 };
 
+// ------------------------------------------------------------------------------------------------
+
 Graph.default = {
 	callback    : false,  // function(graph, iteration)
 	directed    : false,
@@ -70,6 +76,8 @@ Graph.default = {
 	k           : 1.0,    // force constant (low = compact)
 	m           : 1.0     // force dampener (low = smooth)
 };
+
+// ------------------------------------------------------------------------------------------------
 
 Graph.prototype.update = function(options={}) {
 	/* Updates node positions using a force-directed layout,
@@ -201,6 +209,7 @@ Graph.prototype.animate = function(canvas, n, options={}) {
 			let h = canvas.height;
 			let g = canvas.getContext('2d');
 			g.clearRect(0, 0, w, h);
+			this.canvas = canvas;
 			this.update(options);
 			this.update(options);
 			this.render(g, w/2, h/2, options);
@@ -213,3 +222,69 @@ Graph.prototype.animate = function(canvas, n, options={}) {
 	f = f.bind(this);
 	f();
 };
+
+// ------------------------------------------------------------------------------------------------
+
+Graph.prototype.centrality = function() { 
+	/* Returns a {node: weight} (0.0-1.0),
+	 * based on Google PageRank algorithm.
+	 */
+	let len = (o) => Object.keys(o).length;
+
+	let n = this.nodes;
+	let e = this.edges;
+	let w = {};
+	for (let k in n)
+		w[k] = 1 / len(n);
+	for (let i=0; i<100; i++) {
+		let p = {...w};
+		for (let k1 in n) {
+			for (let k2 in e[k1] || {})
+				w[k2] += 0.85 * p[k1] * e[k1][k2] / len(e[k1]);
+			w[k1] += 1 - 0.85;
+		}
+		let m = 0; // normalize
+		let ε = 0; // converged?
+		for (k in n)
+			m += w[k] ** 2.0;
+		for (k in n)
+			w[k] /= m ** 0.5;
+		for (k in n)
+			ε += Math.abs(w[k] - p[k]);
+		if (ε <= len(n) * 0.00001)
+			break;
+	}
+	return w;
+}
+
+// ------------------------------------------------------------------------------------------------
+
+capture = function(canvas) {
+	/* Captures the <canvas> into an <img>.
+	 */
+	let e = document.body.appendChild(
+			document.createElement('img'));
+	e.src = canvas.toDataURL();
+	e.id = 'capture-' + Date.now();
+}
+
+// ------------------------------------------------------------------------------------------------
+
+//	<canvas id="g" width=640 height=480></canvas>
+//	<script src="graph.js"></script>
+//	<script>
+//		var adjacency = {
+//			'node1': {'node2': 1.0},
+//			'node2': {'node3': 1.0}
+//		}
+//		var canvas;
+//		canvas = document.getElementById("g");
+//		canvas.graph = new Graph(adjacency);
+//		canvas.graph.animate(canvas, 1000, {
+//			directed    : true,
+//			fill        : '#fff',
+//			stroke      : '#000',
+//			strokewidth : 0.5,
+//			radius      : 4.0,
+//		});
+//	</script>
