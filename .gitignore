@@ -3,5 +3,6 @@
 build/
 cache/
 dev/
-Grasp.egg-info/
+dist/
+grasp.egg-info/
 WordNet-3.0/
