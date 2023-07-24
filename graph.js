@@ -204,7 +204,7 @@ Graph.prototype.animate = function(canvas, n, options={}) {
 	 */
 	let i = 0;
 	function f() {
-		if (i++ < n - 1) {
+		if (i++ < n) {
 			let w = canvas.width;
 			let h = canvas.height;
 			let g = canvas.getContext('2d');
@@ -248,7 +248,7 @@ Graph.prototype.centrality = function() {
 		for (k in n)
 			m += w[k] ** 2.0;
 		for (k in n)
-			w[k] /= m ** 0.5;
+			w[k] /= m ** 0.5 || 1;
 		for (k in n)
 			ε += Math.abs(w[k] - p[k]);
 		if (ε <= len(n) * 0.00001)
@@ -259,14 +259,34 @@ Graph.prototype.centrality = function() {
 
 // ------------------------------------------------------------------------------------------------
 
-capture = function(canvas) {
-	/* Captures the <canvas> into an <img>.
+capture = function(canvas, n=1) {
+	/* Downloads a JSON file with n frames,
+	 * where every frame is a PNG data URI.
 	 */
-	let e = document.body.appendChild(
-			document.createElement('img'));
-	e.src = canvas.toDataURL();
-	e.id = 'capture-' + Date.now();
+	let a = [];
+	let i = 0;
+	let e;
+	function f() {
+		if (i++ < n) {
+			a.push(canvas.toDataURL());
+			window.requestAnimationFrame(f);
+		} else {
+			a = JSON.stringify(a)
+			e = document.createElement('a');
+			e.download = 'frames.json';
+			e.href = 'data:text/plain,' + a;
+			e.click();
+		}
+	}
+	f();
 }
+
+// for i, s in enumerate(json.load(open('frames.json'))):
+//     s = s.split(',')[1]
+//     s = base64.b64decode(s)
+//     f = open('frame%i.png' % i, 'wb')
+//     f.write(s)
+//     f.close()
 
 // ------------------------------------------------------------------------------------------------
 

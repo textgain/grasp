@@ -6108,24 +6108,25 @@ def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
         which is the amount of indirect incoming links to a node.
     """
     n = nodes(g)
-    v = dict.fromkeys(n, 1.0 / (len(n) or 1))
-    for i in range(iterations):                            #       A -> B -> C
-        p = v.copy() # prior pagerank                      #      0.3  0.3  0.3
-        for n1 in v:                                       # i=0  0.3  0.6  0.6
-            for n2, w in g.get(n1, {}).items():            # i=1  0.3  0.9  1.2
-                v[n2] += damping * w * p[n1] / len(g[n1])  # i=2  0.3  1.2  2.1
-            v[n1] += 1 - damping                           # ...
-
-        # Normalize:
-        d = sum(w * w for w in v.values()) ** 0.5 or 1
-        v = {n: w / d for n, w in v.items()}
-
-        # Converged?
-        e = sum(abs(v[n] - p[n]) for n in v)
-        if e <= epsilon * len(n):
+    w = dict.fromkeys(n, 1.0 / (len(n) or 1))
+    for i in range(iterations):                                    #       A -> B -> C
+        p = w.copy() # prior pagerank                              #      0.3  0.3  0.3
+        for k1 in n:                                               # i=0  0.3  0.6  0.6
+            for k2 in g.get(k1, {}):                               # i=1  0.3  0.9  1.2
+                w[k2] += damping * p[k1] * g[k1][k2] / len(g[k1])  # i=2  0.3  1.2  2.1
+            w[k1] += 1 - damping                                   # ...
+        m = 0 # normalize
+        e = 0 # converged?
+        for k in n:
+            m += w[k] ** 2.0
+        for k in n:
+            w[k] /= m ** 0.5 or 1
+        for k in n:
+            e += abs(w[k] - p[k])
+        if e <= len(n) * epsilon:
             break
 
-    return v
+    return w
 
 def cliques(g):
     """ Returns an iterator of maximal cliques,
