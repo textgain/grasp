@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.7'
+__version__   =  '2.8'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -6424,7 +6424,7 @@ def leaves(g):
     """
     return set(n for n in g if len(g[n]) <= 1 and g.degree(n) == 1)
 
-def prune(g, degree=1, weight=None):
+def prune(g, degree=1, weight=0):
     """ Returns a graph with nodes and edges of given degree and weight (or up).
     """
     g = g.copy()
