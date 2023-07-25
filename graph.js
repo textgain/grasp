@@ -296,7 +296,7 @@ capture = function(canvas, n=1) {
 //		var adjacency = {
 //			'node1': {'node2': 1.0},
 //			'node2': {'node3': 1.0}
-//		}
+//		};
 //		var canvas;
 //		canvas = document.getElementById("g");
 //		canvas.graph = new Graph(adjacency);
