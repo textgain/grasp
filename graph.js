@@ -10,7 +10,8 @@ clamp = function(v, min=0.0, max=1.0) {
 Point = function(x, y) {
 	this.x = isNaN(x) ? Math.random() : x;
 	this.y = isNaN(y) ? Math.random() : y;
-	this.v = { // velocity
+	this.w = 0; // weight
+	this.v = {  // velocity
 		x: 0,
 		y: 0
 	};
@@ -179,8 +180,8 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 	ctx.beginPath();
 	for (let n in this.nodes) {
 		let p = this.nodes[n];
-		ctx.moveTo(p.x + r, p.y);
-		ctx.arc(p.x, p.y, r, 0, 2 * Math.PI);
+		ctx.moveTo(p.x + p.w * r + r, p.y);
+		ctx.arc(p.x, p.y, p.w * r + r, 0, 2 * Math.PI);
 	}
 	ctx.lineWidth = o.strokewidth * 2;
 	ctx.fillStyle = o.fill;
@@ -193,7 +194,8 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 		let p = this.nodes[n];
 		let s = new String(n);
 		ctx.fillStyle = o.stroke;
-		ctx.fillText(s, p.x + r, p.y - r - 1);
+		ctx.fillText(s, p.x + p.w * r + r + 2, 
+						p.y - p.w * r + r - 2);
 	}
 	ctx.restore();
 };
@@ -224,6 +226,12 @@ Graph.prototype.animate = function(canvas, n, options={}) {
 };
 
 // ------------------------------------------------------------------------------------------------
+
+Graph.prototype.centralize = function() {
+	for (let [n, w] of Object.entries(
+		this.centrality()))
+		this.nodes[n].w = w;
+}
 
 Graph.prototype.centrality = function() { 
 	/* Returns a {node: weight} (0.0-1.0),
