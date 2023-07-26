@@ -6103,7 +6103,7 @@ def betweenness(g, k=1000):
     w = {n: w[n] / m for n in w}
     return w
 
-def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
+def pagerank(g, iterations=100, damping=0.85, tolerance=0.00001):
     """ Returns a dict of node id's and their centrality score (0.0-1.0),
         which is the amount of indirect incoming links to a node.
     """
@@ -6123,7 +6123,7 @@ def pagerank(g, iterations=100, damping=0.85, epsilon=0.00001):
             w[k] /= m ** 0.5 or 1
         for k in n:
             e += abs(w[k] - p[k])
-        if e <= len(n) * epsilon:
+        if e <= len(n) * tolerance:
             break
 
     return w
