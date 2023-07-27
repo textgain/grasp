@@ -5702,15 +5702,20 @@ class HTTPError(Exception):
 def generic(code, traceback=''):
     return '<h1>%s %s</h1><pre>%s</pre>' % (code, STATUS[code], traceback)
 
-WSGIServer = wsgiref.simple_server.WSGIServer
+WSGIServer, WSGIRequestHandler = (
+    wsgiref.simple_server.WSGIServer,
+    wsgiref.simple_server.WSGIRequestHandler
+)
 
 class App(ThreadPoolMixIn, WSGIServer):
 
     def __init__(self, host='127.0.0.1', port=8080, root=None, session=HOUR, threads=10, debug=False):
         """ A multi-threaded web app served by a WSGI-server, that starts with App.run().
         """
-        WSGIServer.__init__(self, (host, port), wsgiref.simple_server.WSGIRequestHandler)
         ThreadPoolMixIn.__init__(self, threads)
+
+        WSGIServer.__init__(self, (host, port), WSGIRequestHandler, bind_and_activate=False)
+
         self.set_app(self.__call__)
         self.rate     = collections.defaultdict(lambda: (0, 0)) # (used, since)
         self.router   = Router(static=root)
@@ -5734,6 +5739,8 @@ class App(ThreadPoolMixIn, WSGIServer):
 
         self.debug = debug
         self.server_address = host, port
+        self.server_bind()
+        self.server_activate()
         self.serve_forever()
 
     def route(self, path, rate=None, key=lambda request: request.ip):
