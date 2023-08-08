@@ -742,6 +742,7 @@ def ls(path='*', root=path, **kwargs):
         p = os.path.join(p, path)
         p = os.path.abspath(p)
         p = glob.glob(p, **kwargs)
+        p = sorted(p)
         for f in p:
             yield f
 
@@ -2433,6 +2434,26 @@ def calibrated(examples=[], **kwargs):
 
 # m = calibrated(data, label='+', model=NN)
 # m.save('sentiment.json')
+
+#---- AGREEMENT -----------------------------------------------------------------------------------
+# Inter-rater agreement estimates the reliability of annotations, given a number of annotators.
+
+def agreement(a=[]):
+    """ Returns the agreement (-1.0 to 1.0)
+        in a given list of annotations,
+        each a list of votes per label.
+    """
+    pow = lambda v: v * v
+
+    # Fleiss' kappa:
+    k  = len(a[0])
+    n  = sum(a[0]) * 1.0
+    pi = sum((sum(map(pow, v)) - n) / (n * n - n) for v in a) / len(a)
+    pj = sum(map(pow, (sum(v[i] for v in a) / len(a) / n for i in range(k))))
+    k  = (pi - pj) / ((1 - pj) or 1)
+    return k
+
+# print(agreement([[2, 0], [0, 2]]))
 
 #---- EXPLAINABILITY ------------------------------------------------------------------------------
 # Complex models can become "black boxes" with little insight into their decision-making process.
