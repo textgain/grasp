@@ -4130,6 +4130,7 @@ def serialize(url='', data={}):
 # The download(url) function returns the HTML (JSON, image data, ...) at the given url.
 # If this fails it will raise NotFound (404), Forbidden (403) or TooManyRequests (420).
 
+class BadRequest      (Exception): pass # 400
 class Forbidden       (Exception): pass # 403
 class NotFound        (Exception): pass # 404
 class TooManyRequests (Exception): pass # 429
@@ -4169,6 +4170,8 @@ def request(url, data={}, headers={}, timeout=10):
             raise Forbidden
         if status == 401:
             raise Forbidden
+        if status == 400:
+            raise BadRequest
         if status == 402:
             raise TooManyRequests
         if status == 420:
