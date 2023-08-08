@@ -36,6 +36,14 @@ assert       features((v1, v2))                   == set(('x', 'y'))
 assert next(iter(tfidf((v1, v2))))['x']           == 0.25
 assert       majority([1, 1, 2])                  == 1
 
+#---- ML ------------------------------------------------------------------------------------------
+
+assert list(  chngrams('cats', 2))                == ['ca', 'at', 'ts']
+assert list(    ngrams(('cats', '&', 'dogs'), 2)) == [('cats', '&'), ('&', 'dogs')]
+assert list(    ngrams('cats & dogs', 2))         == [('cats', '&'), ('&', 'dogs')]
+assert list( skipgrams('cats & dogs', 1))         == [('cats', ('&',)), ('&', ('cats', 'dogs')), 
+                                                      ('dogs', ('&',))]
+
 #---- NLP -----------------------------------------------------------------------------------------
 
 assert similarity('cat', 'can', f=chngrams, n=2 ) == 0.5
@@ -133,72 +141,6 @@ assert   list( constituents(s1))[1][1]            == u'VP'
 assert   list( constituents(s1))[2][1]            == u'NP'
 assert   list( constituents(s1))[3][1]            == u''
 
-#---- ML ------------------------------------------------------------------------------------------
-
-assert list(  chngrams('cats', 2))                == ['ca', 'at', 'ts']
-assert list(    ngrams(('cats', '&', 'dogs'), 2)) == [('cats', '&'), ('&', 'dogs')]
-assert list(    ngrams('cats & dogs', 2))         == [('cats', '&'), ('&', 'dogs')]
-assert list( skipgrams('cats & dogs', 1))         == [('cats', ('&',)), ('&', ('cats', 'dogs')), 
-                                                      ('dogs', ('&',))]
-
-#---- WWW -----------------------------------------------------------------------------------------
-
-e1 = DOM('<div id="main"><div class="story"><p>1</p><p>2</p></div</div>')
-e2 = DOM('<div><a href="http://www.site.com">x</a></div>')
-
-assert list(map(u, e1('#main'                 ))) == [u(e1)]
-assert list(map(u, e1('*#main'                ))) == [u(e1)]
-assert list(map(u, e1('div#main'              ))) == [u(e1)]
-assert list(map(u, e1('.story'                ))) == [u'<div class="story"><p>1</p><p>2</p></div>']
-assert list(map(u, e1('div div'               ))) == [u'<div class="story"><p>1</p><p>2</p></div>']
-assert list(map(u, e1('div < p'               ))) == [u'<div class="story"><p>1</p><p>2</p></div>']
-assert list(map(u, e1('div > p'               ))) == [u'<p>1</p>', u'<p>2</p>']
-assert list(map(u, e1('div div p'             ))) == [u'<p>1</p>', u'<p>2</p>']
-assert list(map(u, e1('div p:first-child'     ))) == [u'<p>1</p>']
-assert list(map(u, e1('div p:nth-child(1)'    ))) == [u'<p>1</p>']
-assert list(map(u, e1('div p:nth-child(2)'    ))) == [u'<p>2</p>']
-assert list(map(u, e1('p:not(":first-child")' ))) == [u'<p>2</p>']
-assert list(map(u, e1('div p:contains("2")'   ))) == [u'<p>2</p>']
-assert list(map(u, e1('p + p'                 ))) == [u'<p>2</p>']
-assert list(map(u, e1('p ~ p'                 ))) == [u'<p>2</p>']
-assert list(map(u, e2('*[href]'               ))) == [u'<a href="http://www.site.com">x</a>']
-assert list(map(u, e2('a[href^="http://"]'    ))) == [u'<a href="http://www.site.com">x</a>']
-assert list(map(u, e2('a[href$=".com"]'       ))) == [u'<a href="http://www.site.com">x</a>']
-assert list(map(u, e2('a[href*="site"]'       ))) == [u'<a href="http://www.site.com">x</a>']
-
-assert plaintext(e2                             ) == u'x'
-assert plaintext(e2, keep={'a': []}             ) == u'<a>x</a>'
-assert plaintext(e2, keep={'a': ['href']}       ) == u'<a href="http://www.site.com">x</a>'
-assert plaintext(e2, ignore='a'                 ) == u''
-assert plaintext(u'<a>b</a>\nc'                 ) == u'b c'
-assert plaintext('<a>b </a>c'                   ) == u'b c'
-assert plaintext('<p>b </p>c'                   ) == u'b\n\nc'
-
-#---- ETC -----------------------------------------------------------------------------------------
-
-assert u(date(0                                )) == u'1970-01-01 01:00:00'
-assert u(date(2000, 12, 31                     )) == u'2000-12-31 00:00:00'
-assert u(date(2000, 12, 31) - 60 * 60 * 24      ) == u'2000-12-30 00:00:00'
-assert   date(2000, 12, 31) .format('%Y-%m-%d'  ) == u'2000-12-31'
-assert u(date('Dec 31 2000', format='%b %d %Y' )) == u'2000-12-31 00:00:00'
-
-assert when('Mon Dec 31 2000'                   ) == [u'Mon Dec 31 2000']
-assert when('Monday December 31, 2000.'         ) == [u'Monday December 31', u'2000']
-assert when('Monday, December 31st 2000'        ) == [u'Monday', u'December 31st 2000']
-assert when('Monday 31st of December, 2000'     ) == [u'Monday 31st of December', u'2000']
-assert when('2000/12/31'                        ) == [u'2000/12/31']
-assert when('23:59 p.m.'                        ) == [u'23:59 p.m.']
-assert when('23:59'                             ) == [u'23:59']
-assert when('12pm'                              ) == [u'12pm']
-assert when('2 weeks ago'                       ) == [u'2 weeks ago']
-assert when('5th century'                       ) == [u'5th century']
-assert when('100 years'                         ) == [u'100 years']
-assert when('1950-2000'                         ) == [u'1950-2000']
-assert when('2101 AD'                           ) == [u'2101 AD']
-assert when('day one'                           ) == [u'day one']
-assert when('the day after tomorrow'            ) == [u'the day after tomorrow']
-assert when('the first day of March'            ) == [u'the first day of March']
-
 #---- NLP -----------------------------------------------------------------------------------------
 
 t1 = trie({
@@ -277,6 +219,65 @@ assert len(list(t2.search('zx x'   , etc='*.?'))) == 0
 
 assert subs([0, 3, 'cats', 1], [0, 2, 'cat', 1 ]) == True
 
+#---- WWW -----------------------------------------------------------------------------------------
+
+e1 = DOM('<div id="main"><div class="story"><p>1</p><p>2</p></div</div>')
+e2 = DOM('<div><a href="http://www.site.com">x</a></div>')
+
+assert list(map(u, e1('#main'                 ))) == [u(e1)]
+assert list(map(u, e1('*#main'                ))) == [u(e1)]
+assert list(map(u, e1('div#main'              ))) == [u(e1)]
+assert list(map(u, e1('.story'                ))) == [u'<div class="story"><p>1</p><p>2</p></div>']
+assert list(map(u, e1('div div'               ))) == [u'<div class="story"><p>1</p><p>2</p></div>']
+assert list(map(u, e1('div < p'               ))) == [u'<div class="story"><p>1</p><p>2</p></div>']
+assert list(map(u, e1('div > p'               ))) == [u'<p>1</p>', u'<p>2</p>']
+assert list(map(u, e1('div div p'             ))) == [u'<p>1</p>', u'<p>2</p>']
+assert list(map(u, e1('div p:first-child'     ))) == [u'<p>1</p>']
+assert list(map(u, e1('div p:nth-child(1)'    ))) == [u'<p>1</p>']
+assert list(map(u, e1('div p:nth-child(2)'    ))) == [u'<p>2</p>']
+assert list(map(u, e1('p:not(":first-child")' ))) == [u'<p>2</p>']
+assert list(map(u, e1('div p:contains("2")'   ))) == [u'<p>2</p>']
+assert list(map(u, e1('p + p'                 ))) == [u'<p>2</p>']
+assert list(map(u, e1('p ~ p'                 ))) == [u'<p>2</p>']
+assert list(map(u, e2('*[href]'               ))) == [u'<a href="http://www.site.com">x</a>']
+assert list(map(u, e2('a[href^="http://"]'    ))) == [u'<a href="http://www.site.com">x</a>']
+assert list(map(u, e2('a[href$=".com"]'       ))) == [u'<a href="http://www.site.com">x</a>']
+assert list(map(u, e2('a[href*="site"]'       ))) == [u'<a href="http://www.site.com">x</a>']
+
+assert plaintext(e2                             ) == u'x'
+assert plaintext(e2, keep={'a': []}             ) == u'<a>x</a>'
+assert plaintext(e2, keep={'a': ['href']}       ) == u'<a href="http://www.site.com">x</a>'
+assert plaintext(e2, ignore='a'                 ) == u''
+assert plaintext(u'<a>b</a>\nc'                 ) == u'b c'
+assert plaintext('<a>b </a>c'                   ) == u'b c'
+assert plaintext('<p>b </p>c'                   ) == u'b\n\nc'
+
+#---- ETC -----------------------------------------------------------------------------------------
+
+assert u(date(0                                )) == u'1970-01-01 01:00:00'
+assert u(date(2000, 12, 31                     )) == u'2000-12-31 00:00:00'
+assert u(date(2000, 12, 31) - 60 * 60 * 24      ) == u'2000-12-30 00:00:00'
+assert   date(2000, 12, 31) .format('%Y-%m-%d'  ) == u'2000-12-31'
+assert u(date('Dec 31 2000', format='%b %d %Y' )) == u'2000-12-31 00:00:00'
+
+assert when('Mon Dec 31 2000'                   ) == [u'Mon Dec 31 2000']
+assert when('Monday December 31, 2000.'         ) == [u'Monday December 31', u'2000']
+assert when('Monday, December 31st 2000'        ) == [u'Monday', u'December 31st 2000']
+assert when('Monday 31st of December, 2000'     ) == [u'Monday 31st of December', u'2000']
+assert when('2000/12/31'                        ) == [u'2000/12/31']
+assert when('23:59 p.m.'                        ) == [u'23:59 p.m.']
+assert when('23:59'                             ) == [u'23:59']
+assert when('12pm'                              ) == [u'12pm']
+assert when('2 weeks ago'                       ) == [u'2 weeks ago']
+assert when('5th century'                       ) == [u'5th century']
+assert when('100 years'                         ) == [u'100 years']
+assert when('1950-2000'                         ) == [u'1950-2000']
+assert when('2101 AD'                           ) == [u'2101 AD']
+assert when('day one'                           ) == [u'day one']
+assert when('the day after tomorrow'            ) == [u'the day after tomorrow']
+assert when('the first day of March'            ) == [u'the first day of March']
+
+
 #---- NET -----------------------------------------------------------------------------------------
 
 g = Graph(
@@ -295,7 +296,24 @@ assert               sp(g             , 2, 4)     == (2, 3, 4)
 assert top( betweenness(g                   ))[0] == 3
 assert top(    pagerank(g                   ))[0] == 4
 
-#---- ETC -----------------------------------------------------------------------------------------
+#--------------------------------------------------------------------------------------------------
+
+a = [
+    [0, 0, 0, 0, 14],
+    [0, 2, 6, 4,  2],
+    [0, 0, 3, 5,  6],
+    [0, 3, 9, 2,  0],
+    [2, 2, 8, 1,  1],
+    [7, 7, 0, 0,  0],
+    [3, 2, 6, 3,  0],
+    [2, 5, 3, 2,  2],
+    [6, 5, 2, 1,  0],
+    [0, 2, 2, 3,  7]
+]
+
+assert round(agreement(a), 2) == 0.21
+
+#--------------------------------------------------------------------------------------------------
 
 try:
     loc = {r[0]: r for r in csv(next(ls('en-loc.csv')))}
