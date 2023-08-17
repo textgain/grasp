@@ -551,6 +551,30 @@ def choices(a, weights=[], k=1):
 
 # print(choices(['a', 'b'], weights=[0.75, 0.25], k=10))
 
+class Random(object):
+
+    def __init__(self, seed=0, a=22695477, c=1, m=2**32):
+        """ Pseudo-random number generator (LCG).
+        """
+        self.seed = int(seed)
+        self.a = a
+        self.c = c
+        self.m = m
+        self()
+
+    def __call__(self):
+        """ Returns a number between 0.0 and 1.0.
+        """
+        self.seed *= self.a
+        self.seed += self.c
+        self.seed %= self.m
+        return float(self.seed) / self.m
+
+# random = Random(0)
+# 
+# for i in range(10):
+#     print(random())
+
 #---- FILE ----------------------------------------------------------------------------------------
 # Temporary files are useful when a function takes a filename, but we have the file's data instead.
 
@@ -6525,7 +6549,7 @@ def difference(A, B):
 # The graph visualization algorithm repulses any two nodes (k1) and attracts connected nodes (k2),
 # by a given force (k ≈ size), with a given velocity magnitude (m ≈ speed).
 
-def layout(g, iterations=200, k1=1.0, k2=1.0, k=1.0, m=1.0):
+def layout(g, iterations=200, k1=1.0, k2=1.0, k=1.0, m=1.0, callback=None):
     """ Returns a dict with {node: (x, y)} coordinates.
     """
     n = list(nodes(g))
@@ -6564,6 +6588,9 @@ def layout(g, iterations=200, k1=1.0, k2=1.0, k=1.0, m=1.0):
             x[i] += min(max(v[i][0], -10), +10)
             y[i] += min(max(v[i][1], -10), +10)
             v[i]  = [0.0, 0.0]
+
+        if callback:
+            callback(n, x, y)
 
     p = zip(x, y)
     p = zip(n, p)
