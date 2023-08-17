@@ -1559,7 +1559,8 @@ class Context(list):
         w  = self.width
         h  = self.height
         s  = u''
-        s += '<svg version="1.2" width="%.0f" height="%.0f" xmlns="http://www.w3.org/2000/svg">\n' % (w, h)
+        s += '<svg width="%.0f" height="%.0f" viewbox="0 0 %.0f %.0f"' % (w, h, w, h)
+        s += ' version="1.2" xmlns="http://www.w3.org/2000/svg">\n'
         s += '<desc>%s</desc>\n' % self.info
         s += '<style>a { text-decoration: underline; }</style>\n'
         s += '<defs>\n' 
