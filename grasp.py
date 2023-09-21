@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.8'
+__version__   =  '2.9'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -557,18 +557,18 @@ class Random(object):
         """ Pseudo-random number generator (LCG).
         """
         self.seed = int(seed)
-        self.a = a
-        self.c = c
-        self.m = m
+        self._a = a
+        self._c = c
+        self._m = m
         self()
 
     def __call__(self):
         """ Returns a number between 0.0 and 1.0.
         """
-        self.seed *= self.a
-        self.seed += self.c
-        self.seed %= self.m
-        return float(self.seed) / self.m
+        self.seed *= self._a
+        self.seed += self._c
+        self.seed %= self._m
+        return float(self.seed) / self._m
 
 # random = Random(0)
 # 
@@ -2463,19 +2463,17 @@ def calibrated(examples=[], **kwargs):
 # Inter-rater agreement estimates the reliability of annotations, given a number of annotators.
 
 def agreement(a=[]):
-    """ Returns the agreement (-1.0 to 1.0)
+    """ Returns the agreement (0.0 to 1.0)
         in a given list of annotations,
         each a list of votes per label.
     """
-    pow = lambda v: v * v
-
-    # Fleiss' kappa:
-    k  = len(a[0])
-    n  = sum(a[0]) * 1.0
-    pi = sum((sum(map(pow, v)) - n) / (n * n - n) for v in a) / len(a)
-    pj = sum(map(pow, (sum(v[i] for v in a) / len(a) / n for i in range(k))))
-    k  = (pi - pj) / ((1 - pj) or 1)
-    return k
+    m = len(a)
+    k = len(a[0]) # labels
+    n = sum(a[0]) # voters
+    p = sum(v ** 2. for _ in a for v in _) # free-marginal overall (Randolph, 2008)
+    p = p - (m * n)
+    p = p / (m * n * (n - 1))
+    return p
 
 # print(agreement([[2, 0], [0, 2]]))
 
