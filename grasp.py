@@ -2467,12 +2467,13 @@ def agreement(a=[]):
         in a given list of annotations,
         each a list of votes per label.
     """
+    a = a or [[]]
     m = len(a)
     k = len(a[0]) # labels
     n = sum(a[0]) # voters
-    p = sum(v ** 2. for _ in a for v in _) # free-marginal overall (Randolph, 2008)
+    p = sum(v ** 2. for example in a for v in example) # free-marginal overall (Randolph, 2008)
     p = p - (m * n)
-    p = p / (m * n * (n - 1))
+    p = p / (m * n * (n - 1) or 1)
     return p
 
 # print(agreement([[2, 0], [0, 2]]))
@@ -2941,7 +2942,7 @@ def sep(s):
     """ Returns the string with separated punctuation marks.
     """
     s = s.replace( ',',  ' , ')
-    s = s.replace( ';',  ' , ')
+    s = s.replace( ';',  ' ; ')
     s = s.replace( ':',  ' : ')
     s = s.replace( '.',  ' . ') # fast, naive
     s = s.replace( '!',  ' ! ')
