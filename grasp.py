@@ -78,7 +78,6 @@ import hmac
 import base64
 import binascii
 import email
-import cgi
 import xml.etree.ElementTree as ElementTree
 import sqlite3 as sqlite
 import csv as csvlib
@@ -2289,10 +2288,10 @@ def kfoldcv(Model, data=[], k=10, weighted=False, debug=False, **kwargs):
             R.append((recall, n))
 
             if debug:
-                # k 1 P 99.9 R 99.9 spam
-                print('k %i' % (i + 1), 
-                    'P %.1f' % (100 * precision), 
-                    'R %.1f' % (100 * recall), label)
+                print(u'k=%i P %.1f R %.1f %s' % (i+1, precision * 100, recall * 100, label))
+
+        if debug and set(m.labels) == {0, 1}:
+            print(u'k=%i φ %+.2f\n' % (i+1, mcc(f)))
 
     return wavg(P), wavg(R)
 
@@ -2308,6 +2307,19 @@ def F1(P, R):
 #     data.append((v(tweet), 'real'))
 # 
 # print(kfoldcv(Perceptron, data, k=3, n=5, debug=True)) # ~ P 0.80 R 0.80
+
+def mcc(cf):
+    """ Returns the correlation coefficient (-1.0 to +1.0)
+        for a binary confusion matrix with labels 0 and 1.
+    """
+    TP = cf[1][1]
+    TN = cf[0][0]
+    FP = cf[0][1]
+    FN = cf[1][0]
+
+    return (TP * TN - FP * FN) / math.sqrt((TP + FP) * (TP + FN) * (TN + FP) * (TN + FN) or 1)
+    
+# print((mcc({1: {1: 3, 0: 1}, 0: {0: 4, 1: 1}}) + 1) / 2)
 
 #---- CONFIDENCE ----------------------------------------------------------------------------------
 # Predicted labels usually come with a probability or confidence score.
@@ -5540,7 +5552,8 @@ def date(*v, **format):
 def modified(path):
     """ Returns a Date for the given file path (last modified).
     """
-    return date(os.path.getmtime(path))
+    if os.path.exists(path):
+        return date(os.path.getmtime(path))
 
 def tz(d):
     """ Returns a Date with tzinfo (timezone-aware) if missing.
@@ -5746,6 +5759,12 @@ class HTTPError(Exception):
     def __init__(self, code=404):
         self.code = code
 
+class FormData(dict):
+
+    def __init__(self, s):
+        self.update(re.findall(
+            r'\r\nContent-Disposition: form-data; name="(.*?)"\r\n\r\n(.*?)\r\n', u(s)))
+
 def generic(code, traceback=''):
     return '<h1>%s %s</h1><pre>%s</pre>' % (code, STATUS[code], traceback)
 
@@ -5836,13 +5855,14 @@ class App(ThreadPoolMixIn, WSGIServer):
             q1 = env.get('QUERY_STRING'  ) # GET 
             q2 = env.get('wsgi.input'    ) # POST
 
-            if h1.startswith('multipart') is True:
-                q2 = cgi.FieldStorage(q2, environ=env)
             if h1.startswith('multipart') is False:
                 q2 = q2.read(int(h2 or 0))
+            if h1.startswith('multipart') is True:
+                q2 = q2.read(int(h2 or 0))
+                q2 = FormData(q2)
             if h1.startswith('application/json'):
                 q2 = json.loads(q2)
-            if hasattr(q2, 'keys'): # FieldStorage?
+            if hasattr(q2, 'keys'):
                 q2 = {k: [q2[k]] for k in q2}
             if isinstance(q1, bytes):
                 q1 = u(q1)
@@ -5865,8 +5885,8 @@ class App(ThreadPoolMixIn, WSGIServer):
             'env'     : env,
             'ip'      : env['REMOTE_ADDR'],
             'method'  : env['REQUEST_METHOD'],
-            'path'    : env['PATH_INFO'],
-            'query'   : dict(query(env)),
+            'path'    : env['PATH_INFO'].encode('iso-8859-1').decode(),
+            'query'   : dict(query(env)), # bugs.python.org/issue16679 
             'headers' : dict(headers(env))
         })
 
@@ -6003,14 +6023,17 @@ class HTTPState(dict):
             k = k['session'] # id
         except:
             k = binascii.hexlify(os.urandom(32))
+            k = u(k)
 
         # Update session expiry:
         self[k] = v = t, self.get(k, [{}])[-1]
         # Update session cookie:
-        self.app.response.headers['Set-Cookie'] = \
-            'session=%s;' % str(k) + \
-            'Max-Age=%s;' % self.expires
-
+        self.app.response.headers['Set-Cookie'] = '; '.join((
+            'session=%s' % k,
+            'Max-Age=%s' % self.expires,
+            'SameSite=None',
+            'Secure'
+        ))
         return v[1]
 
     def expire(self, t=0.0):
