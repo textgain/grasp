@@ -6003,11 +6003,12 @@ class Cookie(dict):
 
 class HTTPState(dict):
 
-    def __init__(self, app, expires=HOUR):
+    def __init__(self, app, expires=HOUR, secure=True):
         """ HTTP state management, through cookies.
         """
         self.app     = app
         self.expires = expires
+        self.secure  = secure
         self.checked = 0
 
     def __call__(self):
@@ -6027,12 +6028,13 @@ class HTTPState(dict):
 
         # Update session expiry:
         self[k] = v = t, self.get(k, [{}])[-1]
+
         # Update session cookie:
-        self.app.response.headers['Set-Cookie'] = '; '.join((
-            'session=%s' % k,
-            'Max-Age=%s' % self.expires,
-            'SameSite=None',
-            'Secure'
+        self.app.response.headers['Set-Cookie'] = ''.join((
+            'session=%s;'     % k,
+            'Max-Age=%s;'     % self.expires,
+            'SameSite=None;' if self.secure else '',
+            'Secure;'        if self.secure else '',
         ))
         return v[1]
 
