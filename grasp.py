@@ -5821,15 +5821,16 @@ class App(ThreadPoolMixIn, WSGIServer):
         def decorator(f):
             def wrapper(*args, **kwargs):
                 if rate:
+                    k = key(self.request)          # user id
                     try:
-                        n, t = self.rate[key]      # used, since
+                        n, t = self.rate[k]        # used, since (~0.1KB)
                     except KeyError:
                         raise HTTPError(403)
                     if rate[1] <= time.time() - t: # now - since > interval?
                         n, t = 0, time.time()      # used = 0
                     if rate[0] <= n:               # used > limit?
                         raise HTTPError(429)
-                    self.rate[key] = n + 1, t      # used + 1
+                    self.rate[k] = n + 1, t        # used + 1
                 return f(*args, **kwargs)
             self.router[path] = wrapper
             return wrapper
@@ -6006,12 +6007,11 @@ class Cookie(dict):
 
 class HTTPState(dict):
 
-    def __init__(self, app, expires=HOUR, secure=True):
+    def __init__(self, app, expires=HOUR):
         """ HTTP state management, through cookies.
         """
         self.app     = app
         self.expires = expires
-        self.secure  = secure
         self.checked = 0
 
     def __call__(self):
@@ -6034,10 +6034,10 @@ class HTTPState(dict):
 
         # Update session cookie:
         self.app.response.headers['Set-Cookie'] = ''.join((
-            'session=%s;'     % k,
-            'Max-Age=%s;'     % self.expires,
-            'SameSite=None;' if self.secure else '',
-            'Secure;'        if self.secure else '',
+            'session=%s;' % k,
+            'Max-Age=%s;' % self.expires,
+            'SameSite=Strict;',
+            'Secure;'
         ))
         return v[1]
 
