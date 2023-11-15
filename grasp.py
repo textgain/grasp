@@ -5552,6 +5552,11 @@ def date(*v, **format):
             pass
     raise DateError('unknown date format: %s' % repr(v))
 
+def datediff(d1, d2):
+    """ Returns a timedelta for the difference between d1 - d2.
+    """
+    return datetime.datetime.__sub__(d1, d2)
+
 def modified(path):
     """ Returns a Date for the given file path (last modified).
     """
