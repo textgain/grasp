@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '2.9'
+__version__   =  '3.0'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -237,6 +237,8 @@ def asynchronous(f, callback=lambda v, e: None, blocking=False):
         t.start()
         return t
     return thread
+
+asynch = asynchronous
 
 # def ping(v, e=None):
 #     if e: 
@@ -1883,6 +1885,104 @@ class StochasticGradientDescent(Model):
 
 SGD = StochasticGradientDescent
 
+#---- BERT ----------------------------------------------------------------------------------------
+# The Bert model is a pre-trained, multilingual, Large Language Model (LLM) that can be fine-tuned.
+# The Bert model has a commit() method that will train queued examples on CPU or GPU (~3x speedup),
+# iteratively minimizing loss. It can take an optional callback(model, loss=[]) for early stopping,
+# and will be called automatically on save(). It can also be called manually, for example with n=1,
+# and then saved and evaluated as a "checkpoint" before training another epoch.
+
+# The labels must be 0 or 1, and the training examples must be str.
+
+class Bert(Model):
+
+    def __init__(self, examples=[], n=4, rate=0.0001, base='distilbert-base-multilingual-cased', **kwargs):
+        """ Bidirectional Encoder Representations from Transformers learning algorithm
+        """
+        import torch # 2.1+
+        import transformers; transformers.logging.set_verbosity_error() # 4.25+
+
+        self._d = kwargs.get('device') or 'cpu' # cuda | mps
+        self._t = transformers.AutoTokenizer
+        self._m = transformers.AutoModelForSequenceClassification
+
+        self._t = self._t.from_pretrained(base)
+        self._m = self._m.from_pretrained(base, num_labels=2)
+        self._m = self._m.to(self._d)
+
+        self._f = torch.tensor
+        self._o = torch.optim.AdamW(self._m.parameters(), lr=rate)
+        self._r = torch.optim.lr_scheduler.LinearLR(self._o, 1.0, 0.1, n) # learning rate decay
+        self._n = n
+        self._q = list(examples)
+
+        self.labels = {0: 1, 1: 1}
+
+    def train(self, v, label=None):
+        self._q.append((v, label)) # lazy
+        self.labels[label] = 1
+
+    def _v(self, x):
+        return self._t(x, truncation=True, padding='max_length', return_tensors='pt') # 512 tokens
+
+    def commit(self, n=4, batch=16, callback=None, debug=True):
+        if self._q:
+            for i in range(n): # epochs
+                self._r.step(i)
+              # print(self._r.get_last_lr())
+                v = shuffled(self._q)
+                v = zip(*v)
+                x = next(v)
+                y = next(v)
+                x = list(x)
+                y = list(y)
+                x = self._v(x)
+                y = self._f(y) # tensor(y)
+                x = x.to(self._d)
+                y = y.to(self._d)
+                t = time.time()
+                a = []
+                x['labels'] = y
+                for j in range(0, len(self._q), batch):
+                    e = self._m(**{k: v[j:j+batch] for k, v in x.items()}).loss # mini-batch
+                    e.backward()
+                    a.append(float(e))
+                    self._o.step() # backpropagation
+                    self._o.zero_grad()
+                if callback and callback(self, a): # early stopping
+                    break
+                if debug:
+                    print('loss=%.3f time=%.1fs' % (avg(a), time.time() - t))
+            self._q = []
+
+    def predict(self, v):
+        """ Returns a dict of (label, probability)-items.
+        """
+        v = self._v(v).to(
+            self._d)
+        p = self._m(**v).logits[0] # ~0.1s
+        p = enumerate(p)
+        p = dict(p)
+        p = softmax(p)
+        return p
+
+    def test(self, *args, **kwargs):
+        return Model.test(self, *args, **kwargs)
+
+    def save(self, path, **kwargs):
+        self.commit(self._n, **kwargs)
+        self._t.save_pretrained(path)
+        self._m.save_pretrained(path)
+
+    @classmethod
+    def load(cls, path):
+        return cls(base=path)
+
+# m = Bert(data, device='cpu')
+# m.commit(n=1, batch=32, callback=lambda m, loss: loss[-1] < 0.1, debug=True)
+# m.save('m1')
+# m = Bert.load('m1')
+
 #---- NAIVE BAYES ---------------------------------------------------------------------------------
 # The Naive Bayes model is a simple alternative for Perceptron (it trains very fast).
 # It is based on the likelihood that a given feature occurs with a given label.
@@ -3238,11 +3338,16 @@ tokens = {
     'fr': [
         r'(?i)(?<!\w)(c|d|j|l|m|n|qu|s|t|jusqu|lorsqu|puisqu)\''     , # j'ai
         r'(?i)(?<!\w)(av|ed|ex|Mme)\.'                              ], # Mme.
+    'it': [
+        r'(?i)\w+\'\w+'                                              , # C'è
+        r'(?i)(?<!\w)(Sig|ecc)\.'                                   ], # Sig.
     'nl': [
         r'(?i)\w+\'\w+'                                              , # auto's
         r'(?i)\w\'(er|tje)s?'                                        , # 68'ers
         r'(?<!\w)(bijv|bv|d\.m\.v|e\.a|e\.d|enz|evt|excl|incl)\.'    , # enz.
         r'(?<!\w)(m\.b\.t|mevr|n\.a\.v|o\.?a|ong|t\.o\.v|zgn)\.'    ], # o.a.
+    'pt': [
+        r'(?i)(?<!\w)(Sr|Sra|St|Ex|ex|c)\.'                         ], # ex.
 }
 
 breaks = {
@@ -5508,10 +5613,14 @@ class Date(datetime.datetime):
         return self.timestamp
 
     def __add__(self, t):
+        """ Returns a new date t seconds after.
+        """
         return date(datetime.datetime.__add__(self, 
                     datetime.timedelta(seconds=t) if type(t) in (int, float) else t))
 
     def __sub__(self, t):
+        """ Returns a new date t seconds before.
+        """
         return date(datetime.datetime.__sub__(self, 
                     datetime.timedelta(seconds=t) if type(t) in (int, float) else t))
 
@@ -5679,8 +5788,13 @@ STATUS = BaseHTTPServer.BaseHTTPRequestHandler.responses
 STATUS = {int(k): v[0] for k, v in STATUS.items()}
 STATUS[429] = 'Too Many Requests'
 
-CORS = { # Cross-Origin Resource Sharing
-    'Access-Control-Allow-Origin' : '*',
+headers = {
+    'Content-Type': 
+        'text/html; charset=utf-8',
+    'X-Frame-Options': 
+        'sameorigin',
+    'Access-Control-Allow-Origin': # CORS
+        '*',
 }
 
 # Recycle threads for handling concurrent requests:
@@ -5798,6 +5912,7 @@ class App(ThreadPoolMixIn, WSGIServer):
         self.state    = HTTPState(self, expires=session)
         self.generic  = generic
         self.debug    = debug
+        self.up       = False # running?
 
     def run(self, host=None, port=None, debug=True):
         """ Starts the server.
@@ -5811,6 +5926,7 @@ class App(ThreadPoolMixIn, WSGIServer):
 
         print('Starting server at %s:%s... press ctrl-c to stop.' % (host, port))
 
+        self.up = True
         self.debug = debug
         self.server_address = host, port
         self.server_bind()
@@ -5846,9 +5962,11 @@ class App(ThreadPoolMixIn, WSGIServer):
 
     def __call__(self, env, start_response):
 
+        self.up = True
+
         # Parse HTTP headers.
         # 'HTTP_USER_AGENT' => 'User-Agent'
-        def headers(env):
+        def parse(env):
             for k, v in env.items():
                 if k[:5] == 'HTTP_':
                     k = k[5:]
@@ -5896,14 +6014,14 @@ class App(ThreadPoolMixIn, WSGIServer):
             'method'  : env['REQUEST_METHOD'],
             'path'    : env['PATH_INFO'].encode('iso-8859-1').decode(),
             'query'   : dict(query(env)), # bugs.python.org/issue16679 
-            'headers' : dict(headers(env))
+            'headers' : dict(parse(env))
         })
 
         # Set App.response (thread-safe).
         r = self.response
         r.__dict__.clear()
         r.__dict__.update({
-            'headers' : dict({'Content-Type': 'text/html; charset=utf-8'}, **CORS),
+            'headers' : headers.copy(),
             'code'    : 200
         })
 
