@@ -20,9 +20,10 @@ setup(
             'grasp.kb' : ['*.md', '*.csv', '*.json'],
             'grasp.lm' : ['*.md', '*.csv', '*.json', '*.zip']},
         extras_require = {
-              'matrix' : 'numpy', 
-                 'svd' : 'numpy', 
-                'fsel' : 'scipy'},
+                'Bert' : ['torch', 'transformers'],
+              'matrix' : ['numpy'], 
+                 'svd' : ['numpy'], 
+                'fsel' : ['scipy']},
            classifiers = [
    'Development Status :: 5 - Production/Stable',
     'Intended Audience :: Developers',
