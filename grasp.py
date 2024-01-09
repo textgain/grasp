@@ -1911,10 +1911,10 @@ class Bert(Model):
         self._m = self._m.to(self._d)
 
         self._f = torch.tensor
-        self._o = torch.optim.AdamW(self._m.parameters(), lr=rate)
+        self._o = torch.optim.AdamW(self._m.parameters(), lr=rate) # SGD
         self._r = torch.optim.lr_scheduler.LinearLR(self._o, 1.0, 0.1, n) # learning rate decay
         self._n = n
-        self._q = list(examples)
+        self._q = list(examples) # [(str, int)]
 
         self.labels = {0: 1, 1: 1}
 
@@ -1978,7 +1978,11 @@ class Bert(Model):
     def load(cls, path):
         return cls(base=path)
 
-# m = Bert(data, device='cpu')
+# examples = [
+#     ('dogs say woof', 0),
+#     ('cats say meow', 1),
+# ]
+# m = Bert(examples, device='cpu')
 # m.commit(n=1, batch=32, callback=lambda m, loss: loss[-1] < 0.1, debug=True)
 # m.save('m1')
 # m = Bert.load('m1')
