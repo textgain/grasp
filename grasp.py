@@ -4562,222 +4562,50 @@ setattr(google, 'annotate', annotate)
 #     print(google.annotate(f.name, key='***'))
 
 #---- TWITTER -------------------------------------------------------------------------------------
-# Using u(), oauth(), request() and stream() we can define a Twitter class.
-# Twitter.search(q) yields tweets that contain word q.
-# Twitter.stream(q) yields tweets that contain word q, as a live stream.
-# Twitter.follow(q) yields tweets posted by user @q.
 
-# https://developer.twitter.com/en/docs/twitter-api
-# https://developer.twitter.com/en/docs/twitter-api/v1/rules-and-filtering
-
-keys['Twitter'] = OAuth(
-    'oNWzGQbuYv4tgd5n0snq4mzS1',
-    '14898655-wKdOpCVsv12GKpt1oHoYhjUDXMAAZocJeB5hLSS7O', (
-    'xPkyeGifv6ptbc8vlJZVbCbnMf3rCcJNYX0oGoa7C3T0yTraJh',
-    '1dnAy1aEnuG71Eif2OIY7OC5zP6opYtZBTMlZVlIwCN90'
-))
+keys['Twitter'] = '78b5e99618mshdf023480e605b76p149c54jsn83432d326a65'
 
 Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'author', 'likes'))
 
 class Twitter(object):
 
-    def request(self, url, data={}, key=None, delay=1, cached=False):
-        """ Returns the Twitter API's JSON response as a dict.
-        """
-        r = (url, data) + (key or keys['Twitter'])
-        r = oauth(*r)
-        r = serialize(*r)
-        r = download(r, delay=delay, cached=cached)
-        r = u(r)
-        r = json.loads(r)
-        return r
-
-    def tweet(self, r):
-        """ Returns the Twitter API's JSON response as a Tweet.
-        """
-        # Get tweet.text
-        f = lambda r: decode(
-            r.get('extended_tweet' , {}) \
-             .get('full_text'      ,       # 240 characters (stream)
-            r.get('full_text'      ,       # 240 characters (search)
-            r.get('text'           , ''))) # 140 characters (< 2017)
-        )
-        # Get tweet.id, date, ...
-        a = [
-            r.get('id_str'         , ''),
-            r.get('created_at'     , ''),
-            r.get('lang'           , '').replace('und', ''),
-            r.get('user'           , {}) \
-             .get('screen_name'    , ''),
-            r.get('favorite_count' , 0 )
-        ]
-        # Get full retweet
-        try:
-            r = r['retweeted_status']
-            s = 'RT @%s: %s' % (r['user']['screen_name'], f(r))
-        except:
-            s = f(r)
-        # Get full links
-        try:
-            r = r['entities']['media'][0]
-            s = s.replace(r['url'], r['media_url_https'])
-        except:
-            pass
-
-        return Tweet(a[0], s, *a[1:])
-
-    def stream(self, q, language='', timeout=60, delay=1, key=None):
-        """ Returns an iterator of tweets (live).
-        """
-        r = 'https://stream.twitter.com/1.1/statuses/filter.json', {
-            'language' : language,
-            'track'    : q
-        }
-        r = oauth(*r + (key or keys['Twitter']))
-        r = serialize(*r)
-        r = request(r, timeout=timeout)
-
-        for v in stream(r):
-            v = u(v)
-            v = json.loads(v)
-            v = self.tweet(v)
-            yield v
-            time.sleep(delay)
-
-    def search(self, q, language='', delay=6, cached=False, key=None, raw=False):
+    def search(self, q, language='', delay=4, cached=False, key=None):
         """ Returns an iterator of tweets.
         """
         id = ''
         for _ in range(10):
-            r = 'https://api.twitter.com/1.1/search/tweets.json', {
-                'tweet_mode' : 'extended',
-                'count'      : 100,
-                'max_id'     : id,
-                'lang'       : language,
-                'q'          : q
+            k = {
+                'X-RapidAPI-Host' : 'twitter-api45.p.rapidapi.com',
+                'X-RapidAPI-Key'  : (key or keys['Twitter']),
             }
-            r = self.request(*r + (key, delay, cached)) # 180 / 15min
-            r = r.get('statuses', [])
+            r = 'https://twitter-api45.p.rapidapi.com/search.php' + \
+                '?search_type=Latest' + \
+                '&query='  + urllib.parse.quote(b(q)) + '%20lang:' + language + \
+                '&cursor=' + id
 
-            for v in r:
-                yield v if raw else self.tweet(v)
-            if len(r) > 0:
-                id = int(v['id_str']) - 1
-            if len(r) < 100:
-                return
+            r = download(r, headers=k, delay=delay, cached=cached)
+            r = json.loads(u(r))
 
-    def follow(self, q, language='', delay=6, cached=False, key=None):
-        """ Returns an iterator of tweets for the given username.
-        """
-        return self.search(u'from:' + q, language, delay, cached, key)
-
-    def followers(self, q, delay=75, cached=False, key=None):
-        """ Returns an iterator of followers for the given username.
-        """
-        id = -1
-        while 1:
-            r = 'https://api.twitter.com/1.1/followers/list.json', {
-                'count'       : 200,
-                'cursor'      : id,
-                'screen_name' : q.lstrip('@')
-            }
-            r = self.request(*r + (key, delay, cached)) # 15 / 15min
-
-            for v in r.get('users', []):
-                yield v.get('screen_name')
-            try:
-                id = r['next_cursor']
-            except:
-                return
-            if id == 0:
-                return
-
-    def fetch(self, q, delay=1, cached=False, key=None, raw=False):
-        """ Returns the tweet with the given id.
-        """
-        r = 'https://api.twitter.com/1.1/statuses/show.json', {
-            'stringify_ids' : True,
-            'id'            : q
-        }
-        r = self.request(*r + (key, delay, cached)) # 900 / 15min
-        r = self.tweet(r) if not raw else r
-        return r
-
-    def retweets(self, q, delay=15, cached=False, key=None):
-        """ Returns an iterator of usernames that retweeted the tweet with the given id.
-        """
-        r = 'https://api.twitter.com/1.1/statuses/retweeters/ids.json', {
-            'stringify_ids' : True,
-            'count'         : 100,
-            'id'            : q
-        }
-        r = self.request(*r + (key, delay, cached)) # 75 / 15min
-        r = r.get('ids', [])
-        return r
-
-    def trends(self, q='', delay=15, cached=False, key=None):
-        """ Returns an iterator of trending topics for the region (WOEID).
-        """
-        r = 'https://api.twitter.com/1.1/trends/place.json', {'id': q or 1}
-        r = self.request(*r + (key, delay, cached)) # 75 / 15min
-
-        if r:
-            for r in r[0]['trends']:
-                yield r['name']
-
-    def profile(self, q, delay=1, cached=False, key=None):
-        """ Returns the username's (name, text, language, location, date, photo, followers, tweets).
-        """
-        r = 'https://api.twitter.com/1.1/users/show.json', {
-            'screen_name' : q
-        }
-        r = self.request(*r + (key, delay, cached)) # 900 / 15min
-
-        return (
-          # r.get('id_str'            , '')
-            r.get('name'              , ''),
-            r.get('description'       , ''),
-            r.get('lang'              , '') or '',
-            r.get('location'          , ''),
-            r.get('created_at'        , ''),
-            r.get('profile_image_url' , ''),
-            r.get('followers_count'   , 0 ),
-            r.get('statuses_count'    , 0 )
-        )
+            for v in r['timeline']:
+                yield Tweet(
+                    v['tweet_id'],
+                    v['text'],
+                    v['created_at'],
+                    v['lang'].replace('und', ''),
+                    v['screen_name'],
+                    v['favorites']
+                )
+            id = r.get('next_cursor')
+            if not id:
+                break
 
     def __call__(self, *args, **kwargs):
         return self.search(*args, **kwargs)
 
 twitter = Twitter()
 
-# ISO 639-1 WOEIDs:
-
-woeid = {
-    'BE' : 23424757,
-    'DE' : 23424829,
-    'ES' : 23424950,
-    'FR' : 23424819,
-    'IT' : 23424853,
-    'NL' : 23424909,
-    'PL' : 23424923,
-    'PT' : 23424925,
-    'RU' : 23424936,
-    'SE' : 23424954,
-    'UK' : 23424975,
-    'US' : 23424977,
-}
-
 # for tweet in twitter('cats', language='en'):
 #     print(tweet.text)
-
-# for tweet in twitter.stream('cats'):
-#     print(tweet.text)
-
-# for username in twitter.followers('textgain'):
-#     print(username)
-
-# for v in twitter('to:textgain', raw=True):
-#     print(v['in_reply_to_status_id'], twitter.tweet(v))
 
 #---- WIKIPEDIA -----------------------------------------------------------------------------------
 
