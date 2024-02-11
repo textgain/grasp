@@ -3875,8 +3875,8 @@ def head(phrase, tag='NP', language='en'):
 
 df = LazyDict() # document frequency
 
-for f in ls('*-doc.json.zip'):
-    df[f[-15:-13]] = lambda f=f: json.load(unzip(f))
+for f in ls('*-doc.json'):
+    df[f[-15:-13]] = lambda f=f: json.load(f)
 
 def keywords(s, language='en', n=10):
     """ Returns a list of n keywords.
@@ -3931,8 +3931,8 @@ polarity = {
 
 polarity = LazyDict()
 
-for f in ls('*-pov.json.zip'): # point-of-view
-    polarity[f[-15:-13]] = lambda f=f: json.load(unzip(f))
+for f in ls('*-pov.json'): # point-of-view
+    polarity[f[-15:-13]] = lambda f=f: json.load(f)
 
 def sentiment(s, language='en'):
     """ Returns the polarity of the string as a float,
@@ -4573,7 +4573,7 @@ class Twitter(object):
         """ Returns an iterator of tweets.
         """
         id = ''
-        for _ in range(10):
+        for _ in range(50): # ±20 x 50
             k = {
                 'X-RapidAPI-Host' : 'twitter-api45.p.rapidapi.com',
                 'X-RapidAPI-Key'  : (key or keys['Twitter']),
@@ -4583,7 +4583,7 @@ class Twitter(object):
                 '&query='  + urllib.parse.quote(b(q)) + '%20lang:' + language + \
                 '&cursor=' + id
 
-            r = download(r, headers=k, delay=delay, cached=cached)
+            r = download(r, headers=k, delay=delay, cached=cached) # 1000/hr
             r = json.loads(u(r))
 
             for v in r['timeline']:
@@ -6655,8 +6655,8 @@ def setup(src='https://github.com/textgain/grasp/blob/master/', language=('en',)
     for k in language:
         a.append(('lm',  '~lang.json.zip' % k)) # language detection
         a.append(('lm', '%s-pos.json.zip' % k)) # parts-of-speech
-        a.append(('lm', '%s-pov.json.zip' % k)) # point-of-view
-        a.append(('lm', '%s-doc.json.zip' % k)) # document frequency
+        a.append(('lm', '%s-pov.json'     % k)) # point-of-view
+        a.append(('lm', '%s-doc.json'     % k)) # document frequency
         a.append(('kb', '%s-loc.json'     % k)) # locale
         a.append(('kb', '%s-loc.csv'      % k)) # locale
         a.append(('kb', '%s-per.csv'      % k)) # gender
