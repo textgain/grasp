@@ -3,9 +3,9 @@
 **Grasp** has optional, pre-trained language models for:
 
 - language identification (`~lang.json.zip`)
-- part-of-speech tagging (`**-pos.json`) 
-- sentiment analysis (`**-pov.json`)
-- word frequency (`**-doc.json`)
+- part-of-speech tagging (`*-pos.json`) 
+- sentiment analysis (`*-pov.json`)
+- word frequency (`*-doc.json`)
 
 | LANGUAGE | LID | POS | POV | DOC |
 | :------: | :-: | :-: | :-: | :-: |
