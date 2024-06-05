@@ -52,7 +52,7 @@ def v(s):
 ```
 ```py
 data = []
-for name, gender, where, when in csv('en-nom.csv'):
+for name, gender, where, when in csv('en-per.csv'):
     data.append((v(name), gender))
 
 m = fit(data) # P 78% R 79%
