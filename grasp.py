@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '3.0'
+__version__   =  '3.1'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -536,8 +536,10 @@ def flatten(a, type=list):
 
 # print(flatten([1, [2, [3, 4]]]))  
 
+#---- RANDOM --------------------------------------------------------------------------------------
+
 def choices(a, weights=[], k=1):
-    """ Returns random elements from the given list,
+    """ Returns a list of k random elements from the given list,
         with optional (non-negative) probabilities.
     """
     if weights:
@@ -551,6 +553,13 @@ def choices(a, weights=[], k=1):
         return [random.choice(a) for _ in range(k)]
 
 # print(choices(['a', 'b'], weights=[0.75, 0.25], k=10))
+
+def tiebreak(counter, default=None, key=lambda k: random.random()):
+    """ Returns the dict key with max value, by default with random tie-breaking.
+    """
+    return max(((v, key(k), k) for k, v in counter.items()), default=(default,))[-1]
+
+# print(tiebreak({'aa': 2, 'a': 2, 'b': 1}, key=len))
 
 class Random(object):
 
@@ -3258,7 +3267,7 @@ language = lang
 Location = collections.namedtuple('Location', ('city', 'country', 'lat', 'lng'))
 
 @static(m=None)
-def loc(s):
+def loc(s, country=None):
     """ Returns a (Location, count)-dict of city names (EU).
     """
     if not loc.m:
@@ -3274,6 +3283,7 @@ def loc(s):
 
     f = m.search(s)
     f = (m.tag for m in f)
+    f = (m for m in f if not country or country == m.country)
     f = collections.Counter(f)
     return f
 
@@ -4272,7 +4282,7 @@ def serialize(url='', data={}):
 
 #---- REQUESTS & STREAMS --------------------------------------------------------------------------
 # The download(url) function returns the HTML (JSON, image data, ...) at the given url.
-# If this fails it will raise NotFound (404), Forbidden (403) or TooManyRequests (420).
+# If this fails it will raise NotFound (404), Forbidden (403) or TooManyRequests (429).
 
 class BadGateway      (Exception): pass # 502
 class BadRequest      (Exception): pass # 400
@@ -4569,7 +4579,7 @@ Tweet = collections.namedtuple('Tweet', ('id', 'text', 'date', 'language', 'auth
 
 class Twitter(object):
 
-    def search(self, q, language='', delay=4, cached=False, key=None):
+    def search(self, q, language='', delay=4, cached=False, key=None, **kwargs):
         """ Returns an iterator of tweets.
         """
         id = ''
@@ -4583,7 +4593,7 @@ class Twitter(object):
                 '&query='  + urllib.parse.quote(b(q)) + '%20lang:' + language + \
                 '&cursor=' + id
 
-            r = download(r, headers=k, delay=delay, cached=cached) # 1000/hr
+            r = download(r, headers=k, delay=delay, cached=cached, **kwargs) # 1000/hr
             r = json.loads(u(r))
 
             for v in r['timeline']:
@@ -4744,13 +4754,15 @@ def gpt(q, d=1, delay=1, cached=False, timeout=30, key=None):
 
 #---- GPS -----------------------------------------------------------------------------------------
 
+keys['GPS'] = ''
+
 Coordinates = collections.namedtuple('Coordinates', ('lat', 'lng'))
 
 def gps(q, delay=35, cached=False, key=None):
     """ Returns the latitute & longitude of a location.
     """
     r  = 'https://api.opencagedata.com/geocode/v1/json'
-    r += '?key=aa49341718034ffc9774c216b6460b71' 
+    r += '?key=' + (key or keys['GPS'])
     r += '&q=' + urllib.parse.quote(b(q or '--'))
     r  = download(r, delay=delay, cached=cached) # 2500 / day
     r  = json.loads(u(r))
@@ -6045,28 +6057,28 @@ App.session = \
 def nodes(g):
     return set().union(g, *g.values()) # set((node1, node2))
 
-def dfs(g, n1, f=lambda *e: True, v=set()):
+def dfs(g, n1, f=lambda *e: True, v=set(), d=1e10):
     """ Depth-first search.
         Calls f(n1, n2) on the given node, its adjacent nodes if True, and so on.
     """
     v.add(n1) # visited?
     for n2 in g.get(n1, {}):
-        if f(n1, n2) != False:
-            if not n2 in v:
-                dfs(g, n2, f, v)
+        if d and f(n1, n2) and not n2 in v:
+            dfs(g, n2, f, v, d-1)
+    return v
 
-def bfs(g, n1, f=lambda *e: True, v=set()):
+def bfs(g, n1, f=lambda *e: True, v=set(), d=1e10):
     """ Breadth-first search (spreading activation).
         Calls f(n1, n2) on the given node, its adjacent nodes if True, and so on.
     """
-    q = collections.deque([n1])
+    q = collections.deque([(n1, d)])
     while q:
-        n1 = q.popleft()
+        n1, d = q.popleft()
         v.add(n1)
         for n2 in g.get(n1, {}):
-            if f(n1, n2) != False:
-                if not n2 in v:
-                    q.append(n2)
+            if d and f(n1, n2) and not n2 in v:
+                q.append((n2, d-1))
+    return v
 
 # def visit(n1, n2):
 #     print(n1, n2)
@@ -6171,11 +6183,12 @@ def cliques(g):
         that are all connected to each other.
     """
 
-    # Bron-Kerbosch's backtracking algorithm.
+    # Bron-Kerbosch's backtracking algorithm 
+    # for undirected graphs (A -> B, B -> A).
     def search(r, p, x):
         if p or x:
-            u = p | x # pivot
-            u = u.pop()
+            u = p | x
+            u = u.pop() # pivot
             for n in p - set(g[u]):
                 for c in search( 
                   r | set((n,)), 
@@ -6386,7 +6399,7 @@ class Graph(dict): # { node id1: { node id2: edge }}
         g = Graph({}, self.directed)
         g.add(n)
         for _ in range(depth):
-            for e in [e for e in self.edges if not e in g and e.node1 in g or e.node2 in g]:
+            for e in (e for e in self.edges if not e in g and e.node1 in g or e.node2 in g):
                 g.add(*e)
         return g
 
@@ -6622,11 +6635,12 @@ def visualize(g, **kwargs):
         '\tcanvas.graph = new Graph(adjacency);',
         '\tcanvas.graph.animate(canvas, %(n)s, {',
         '\t\tdirected    : %s,' % f('directed', g.directed),
+        '\t\tlabeled     : %s,' % f('labeled', True),
         '\t\tfont        : %s,' % f('font', '10px sans-serif'),
         '\t\tfill        : %s,' % f('fill', '#fff'),
         '\t\tstroke      : %s,' % f('stroke', '#000'),
         '\t\tstrokewidth : %s,' % f('strokewidth', 0.5),
-        '\t\tradius      : %s,' % f('radius', 3.0),
+        '\t\tradius      : %s,' % f('radius', 4.0),
         '\t\tk1          : %s,' % f('k1', 1.0),
         '\t\tk2          : %s,' % f('k2', 1.0),
         '\t\tk           : %s,' % f('k', 1.0),
@@ -6635,7 +6649,7 @@ def visualize(g, **kwargs):
         '</script>'
     ))
     k = {}
-    k.update({'src': 'graph.js', 'id': 'g', 'width': 640, 'height': 480, 'n': 1000})
+    k.update({'src': 'graph.js', 'id': 'g', 'width': 720, 'height': 480, 'n': 1000})
     k.update(kwargs)
     k = {k: json.dumps(v) for k, v in k.items()}
     return s % k
