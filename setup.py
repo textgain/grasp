@@ -6,19 +6,20 @@ PATH = os.path.dirname(__file__)
 
 setup(
                   name = 'grasp',
-               version = '2.7',
+               version = '3.1',
            description = 'Simple NLP toolkit',
                license = 'BSD',
                 author = 'Textgain',
           author_email = 'info@textgain.com',
                    url = 'https://github.com/textgain/grasp',
                scripts = [],
-              packages = ['grasp',       'grasp.kb',       'grasp.lm'      ],
-           package_dir = {'grasp': PATH, 'grasp.kb': 'kb', 'grasp.lm': 'lm'},
+              packages = ['grasp',       'grasp.kb',       'grasp.lm',       'grasp.etc'       ],
+           package_dir = {'grasp': PATH, 'grasp.kb': 'kb', 'grasp.lm': 'lm', 'grasp.etc': 'etc'},
           package_data = {
-                    '' : ['*.md', '*.csv', '*.json', '*.js', '*.py'],
+                    '' : ['*.md', '*.csv', '*.json', '*.js', '*.txt', '*.py'],
             'grasp.kb' : ['*.md', '*.csv', '*.json'],
-            'grasp.lm' : ['*.md', '*.csv', '*.json', '*.zip']},
+            'grasp.lm' : ['*.md', '*.csv', '*.json', '*.zip'],
+            'grasp.etc': ['pdf*']},
         extras_require = {
                 'Bert' : ['torch', 'transformers'],
               'matrix' : ['numpy'], 
@@ -46,3 +47,5 @@ setup(
                 'Topic :: Text Processing :: Linguistic',
                 'Topic :: Text Processing :: Markup :: HTML'],
 )
+
+# python -m build --wheel
