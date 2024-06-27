@@ -4582,32 +4582,29 @@ class Twitter(object):
     def search(self, q, language='', delay=4, cached=False, key=None, **kwargs):
         """ Returns an iterator of tweets.
         """
-        id = ''
-        for _ in range(50): # ±20 x 50
-            k = {
-                'X-RapidAPI-Host' : 'twitter-api45.p.rapidapi.com',
-                'X-RapidAPI-Key'  : (key or keys['Twitter']),
-            }
-            r = 'https://twitter-api45.p.rapidapi.com/search.php' + \
-                '?search_type=Latest' + \
-                '&query='  + urllib.parse.quote(b(q)) + '%20lang:' + language + \
-                '&cursor=' + id
+        k = {
+            'X-RapidAPI-Host' : 'twitter-api45.p.rapidapi.com',
+            'X-RapidAPI-Key'  : (key or keys['Twitter']),
+        }
+        r = 'https://twitter-api45.p.rapidapi.com/search.php' + \
+            '?search_type=Latest' + \
+            '&query='  + urllib.parse.quote(b(q)) + '%20lang:' + language + \
+            '&cursor=' + ''
 
-            r = download(r, headers=k, delay=delay, cached=cached, **kwargs) # 1000/hr
-            r = json.loads(u(r))
+        r = download(r, headers=k, delay=delay, cached=cached, **kwargs) # 1000/hr
+        r = json.loads(u(r) or '{}')
 
-            for v in r['timeline']:
-                yield Tweet(
-                    v['tweet_id'],
-                    v['text'],
-                    v['created_at'],
-                    v['lang'].replace('und', ''),
-                    v['screen_name'],
-                    v['favorites']
-                )
-            id = r.get('next_cursor')
-            if not id:
-                break
+        for v in r.get('timeline', ()):
+            yield Tweet(
+                v['tweet_id'],
+                v['text'],
+                v['created_at'],
+                v['lang'].replace('und', ''),
+                v['screen_name'],
+                v['favorites']
+            )
+
+        # id = r.get('next_cursor')
 
     def __call__(self, *args, **kwargs):
         return self.search(*args, **kwargs)

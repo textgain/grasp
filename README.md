@@ -1,3 +1,5 @@
+![Grasp](grasp.jpg)
+
 # Grasp.py – Explainable AI
 
 **Grasp** is a lightweight AI toolkit for Python, with tools for data mining, natural language processing (NLP), machine learning (ML) and network analysis. It has 300+ fast and essential algorithms, with ~25 lines of code per function, self-explanatory function names, no dependencies, bundled into one well-documented file: [grasp.py](https://github.com/textgain/grasp/blob/master/grasp.py) (250KB). Or install with [pip](https://pip.pypa.io/en/stable/getting-started), including language models (25MB):
