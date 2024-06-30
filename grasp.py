@@ -4596,12 +4596,12 @@ class Twitter(object):
 
         for v in r.get('timeline', ()):
             yield Tweet(
-                v['tweet_id'],
-                v['text'],
-                v['created_at'],
-                v['lang'].replace('und', ''),
-                v['screen_name'],
-                v['favorites']
+                v.get( 'tweet_id'    ) or '' ,
+                v.get( 'text'        ) or '' ,
+                v.get( 'created_at'  ) or '' ,
+              ( v.get( 'lang'        ) or '' ).replace('und', ''),
+                v.get( 'screen_name' ) or '' ,
+                v.get( 'favorites'   ) or '' ,
             )
 
         # id = r.get('next_cursor')
