@@ -4425,7 +4425,7 @@ def sniff(url, *args, **kwargs):
 
 # t = time.time() - 7 * 24 * 60 * 60 
 # for f in glob.glob(cd(CACHE, '*')):
-#     if os.stat(f).st_ctime < t:
+#     if os.stat(f).st_mtime < t:
 #         os.remove(f)
 
 #---- SEARCH --------------------------------------------------------------------------------------
@@ -4592,16 +4592,16 @@ class Twitter(object):
             '&cursor=' + ''
 
         r = download(r, headers=k, delay=delay, cached=cached, **kwargs) # 1000/hr
-        r = json.loads(u(r) or '{}')
+        r = json.loads(r and u(r) or '{}')
 
         for v in r.get('timeline', ()):
             yield Tweet(
-                v.get( 'tweet_id'    ) or '' ,
-                v.get( 'text'        ) or '' ,
-                v.get( 'created_at'  ) or '' ,
-              ( v.get( 'lang'        ) or '' ).replace('und', ''),
-                v.get( 'screen_name' ) or '' ,
-                v.get( 'favorites'   ) or '' ,
+                v.get('tweet_id'    , ''),
+                v.get('text'        , ''),
+                v.get('created_at'  , ''),
+                v.get('lang'        , '').replace('und', ''),
+                v.get('screen_name' , ''),
+                v.get('favorites'   , '')
             )
 
         # id = r.get('next_cursor')
@@ -4728,7 +4728,7 @@ def gpt(q, d=1, delay=1, cached=False, timeout=30, key=None):
     r  = 'https://api.openai.com/v1/chat/completions', {
          'messages'      : q,
          'temperature'   : d,
-         'model'         : 'gpt-3.5-turbo',
+         'model'         : 'gpt-4o-mini',
     }, { 'Content-Type'  : 'application/json',
          'Authorization' : 'Bearer %s' % (key or keys['GPT'])
     }
@@ -5087,7 +5087,7 @@ SELECTOR = re.compile(''.join((
     r'([+<>~])?',                                                 # combinator + < >
     r'(\w+|\*)?',                                                 # tag
     r'((?:[.#][-\w]+)|(?:\[.*?\]))?',                             # attributes # . [=]
-    r'(\:first-child|\:(?:nth-child|not|contains)\(.*?\))?',      # pseudo :
+    r'(\:first-child|\:(?:nth-child|not|has|contains)\(.*?\))?',  # pseudo :
     r'$'
 )))
 
@@ -5157,16 +5157,16 @@ def selector(element, s):
                 e = (e for e in e if not e.previous)
                 e = list(unique(e))                               # div a:first-child
             if pseudo.startswith(':nth-child'):
-                s = pseudo[10:].strip('()"\'')
+                s = pseudo[11:-1]
                 e = [e[int(s) - 1]]                               # div a:nth-child(2)
             if pseudo.startswith(':not'):
-                s = pseudo[4:].strip('()"\'')
-                e = [e for e in e if (e in element(s)) is False]  # div:not(.main)
+                s = pseudo[5:-1]
+                e = [e for e in e if e not in element(s)]         # div:not(.main)
             if pseudo.startswith(':has'):
-                s = pseudo[4:].strip('()"\'')
-                e = [e for e in e if (e in element(s)) is True ]  # div:has(.main)
+                s = pseudo[5:-1]
+                e = [e for e in e if e(s)]                        # div:has(.main)
             if pseudo.startswith(':contains'):
-                s = pseudo[9:].strip('()"\'')
+                s = pseudo[11:-2]
                 e = (e for e in e if s in e.html.lower())
                 e = list(unique(e))                               # div:contains("hello")
 
