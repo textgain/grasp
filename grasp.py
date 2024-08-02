@@ -3886,7 +3886,7 @@ def head(phrase, tag='NP', language='en'):
 df = LazyDict() # document frequency
 
 for f in ls('*-doc.json'):
-    df[f[-15:-13]] = lambda f=f: json.load(f)
+    df[f[-11:-9]] = lambda f=f: json.load(open(f, 'rb'))
 
 def keywords(s, language='en', n=10):
     """ Returns a list of n keywords.
@@ -3942,7 +3942,7 @@ polarity = {
 polarity = LazyDict()
 
 for f in ls('*-pov.json'): # point-of-view
-    polarity[f[-15:-13]] = lambda f=f: json.load(f)
+    polarity[f[-11:-9]] = lambda f=f: json.load(open(f, 'rb'))
 
 def sentiment(s, language='en'):
     """ Returns the polarity of the string as a float,
@@ -4591,17 +4591,20 @@ class Twitter(object):
             '&query='  + urllib.parse.quote(b(q)) + '%20lang:' + language + \
             '&cursor=' + ''
 
+      # r = 'https://twitter-api45.p.rapidapi.com/timeline.php' + \
+      #     '?screenname=' + q.lstrip('@')
+
         r = download(r, headers=k, delay=delay, cached=cached, **kwargs) # 1000/hr
         r = json.loads(r and u(r) or '{}')
 
         for v in r.get('timeline', ()):
             yield Tweet(
-                v.get('tweet_id'    , ''),
-                v.get('text'        , ''),
-                v.get('created_at'  , ''),
-                v.get('lang'        , '').replace('und', ''),
-                v.get('screen_name' , ''),
-                v.get('favorites'   , '')
+                v.get('tweet_id'   ) or '',
+                v.get('text'       ) or '',
+                v.get('created_at' ) or '',
+              ( v.get('lang'       ) or '').replace('und', ''),
+                v.get('screen_name') or '',
+                v.get('favorites'  ) or '' 
             )
 
         # id = r.get('next_cursor')
