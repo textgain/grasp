@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '3.1'
+__version__   =  '3.2'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -3273,7 +3273,7 @@ def loc(s, country=None):
     if not loc.m:
         m = ls('en-loc.json')
         m = next(m)
-        m = open(m)
+        m = open(m, 'rb')
         m = json.load(m)
         m = m.items()
         m = {k2: Location(k2, k1, *v[k2][:2]) for k1, v in m for k2 in v} 
@@ -6628,7 +6628,7 @@ def visualize(g, **kwargs):
         '<canvas id=%(id)s width=%(width)s height=%(height)s></canvas>',
         '<script src=%(src)s></script>',
         '<script>',
-        '\tvar adjacency = %s;' % json.dumps(a),
+        '\tvar adjacency = %s;' % json.dumps(a).replace('%', '%%'),
         '',
         '\tvar canvas;',
         '\tcanvas = document.getElementById(%(id)s);',
