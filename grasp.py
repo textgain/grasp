@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '3.2'
+__version__   =  '3.2.1'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -2951,6 +2951,10 @@ def mark(s, matches=[], format=lambda w: ' '.join(w), tag=('<mark class="{}">', 
     m2 = []
     # Merge class by character:
     for i, j, k, v in matches:
+        if i is None:
+            i = 0
+        if j is None:
+            j = len(s)
         for i in range(i, j):
             m1[i].add(v)
     # Merge character by class:
@@ -5779,23 +5783,29 @@ class App(ThreadPoolMixIn, WSGIServer):
 
     def route(self, path, rate=None, key=lambda request: request.ip):
         """ The @app.route(path) decorator defines the handler for the given path.
-            The handler(*path, **query) returns a str or dict for the given path.
-            With rate=(n, t), the IP address is granted n requests per t seconds,
-            before raising a 429 Too Many Requests error.
+            The handler(*path, **query) returns a str or dict for the given path. 
+            With rate=(n, t), the IP address is granted n requests per t seconds, 
+            before raising a 429 Too Many Requests error. A dict with {key: n, t} 
+            individual rates can also be given.
         """
         def decorator(f):
             def wrapper(*args, **kwargs):
                 if rate:
-                    k = key(self.request)          # user id
+                    k = key(self.request)       # user id
+                    v = rate # (nonlocal)
                     try:
-                        n, t = self.rate[k]        # used, since (~0.1KB)
+                        n, t = self.rate[k]     # used, since (~0.1KB)
                     except KeyError:
                         raise HTTPError(403)
-                    if rate[1] <= time.time() - t: # now - since > interval?
-                        n, t = 0, time.time()      # used = 0
-                    if rate[0] <= n:               # used > limit?
+                    try:
+                        v = v[k] if isinstance(v, dict) else v
+                    except KeyError:
+                        raise HTTPError(403)
+                    if v[1] <= time.time() - t: # now - since > interval?
+                        t, n = time.time() , 0  # used = 0
+                    if v[0] <= n:               # used > limit?
                         raise HTTPError(429)
-                    self.rate[k] = n + 1, t        # used + 1
+                    self.rate[k] = n + 1, t     # used + 1
                 return f(*args, **kwargs)
             self.router[path] = wrapper
             return wrapper
@@ -6299,9 +6309,9 @@ class Graph(dict): # { node id1: { node id2: edge }}
 
     @property
     def density(self):
-        n = len(list(self.nodes))
+        n = len(list(self.nodes)) or 1
         e = len(list(self.edges))
-        return float(self.directed + 1) * e / n / (n - 1) # 0.0-1.0
+        return float(self.directed + 1) * e / n / (n - 1 or 1) # 0.0-1.0
 
     @property
     def nodes(self):
