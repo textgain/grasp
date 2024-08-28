@@ -5790,15 +5790,19 @@ class App(ThreadPoolMixIn, WSGIServer):
         """
         def decorator(f):
             def wrapper(*args, **kwargs):
-                if rate:
+                if rate is not None:
                     k = key(self.request)       # user id
                     v = rate # (nonlocal)
                     try:
-                        n, t = self.rate[k]     # used, since (~0.1KB)
-                    except KeyError:
+                        v = v(k) if callable(v) else v
+                    except:
                         raise HTTPError(403)
                     try:
                         v = v[k] if isinstance(v, dict) else v
+                    except KeyError:
+                        raise HTTPError(403)
+                    try:
+                        n, t = self.rate[k]     # used, since (~0.1KB)
                     except KeyError:
                         raise HTTPError(403)
                     if v[1] <= time.time() - t: # now - since > interval?
