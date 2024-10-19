@@ -371,7 +371,7 @@ class PersistentDict(dict):
 
     @atomic # (thread-safe)
     def save(self, path=''):
-        json.dump(self, open(path or self.path, 'w')) # JSON
+        json.dump(self, open(path or self.path, 'w'), ensure_ascii=False, indent=4) # JSON
 
 # db = PersistentDict('db.json', {'k': 'v'})
 # db.save()
@@ -534,7 +534,17 @@ def flatten(a, type=list):
             q.append(v)
     return q
 
-# print(flatten([1, [2, [3, 4]]]))  
+# print(flatten([1, [2, [3, 4]]]))
+
+def group(a, key=lambda v: v):
+    """ Returns a dict of lists of values grouped by key(v).
+    """
+    g = {}
+    for v in a:
+        g.setdefault(key(v), []).append(v)
+    return g
+
+# print(group([1, 1, 1, 2, 2, 3]))
 
 #---- RANDOM --------------------------------------------------------------------------------------
 
@@ -4296,8 +4306,8 @@ class TooManyRequests (Exception): pass # 429
 class Timeout         (Exception): pass
 
 cookies = cookielib.CookieJar()
-proxies = None # {'https': ...}
 context = None # ssl.SSLContext
+proxies = {}   # {'https': ...}
 
 def request(url, data={}, headers={}, timeout=10):
     """ Returns a file-like object from the given URL.
@@ -4311,10 +4321,10 @@ def request(url, data={}, headers={}, timeout=10):
     f = []
     if cookies:
         f.append(urllib.request.HTTPCookieProcessor(cookies))
-    if proxies:
-        f.append(urllib.request.ProxyHandler(proxies=proxies))
     if context:
         f.append(urllib.request.HTTPSHandler(context=context))
+    if proxies:
+        f.append(urllib.request.ProxyHandler(proxies=proxies))
     try:
         q = urllib.request.Request(url, data or None, headers)
         f = urllib.request.build_opener(*f)
@@ -5643,6 +5653,8 @@ headers = {
         'sameorigin',
     'Access-Control-Allow-Origin': # CORS
         '*',
+    'Access-Control-Allow-Headers':
+        '*',
 }
 
 # Recycle threads for handling concurrent requests:
@@ -5846,7 +5858,7 @@ class App(ThreadPoolMixIn, WSGIServer):
                 q2 = q2.read(int(h2 or 0))
                 q2 = FormData(q2)
             if h1.startswith('application/json'):
-                q2 = json.loads(q2)
+                q2 = json.loads(q2 or '{}')
             if hasattr(q2, 'keys'):
                 q2 = {k: [q2[k]] for k in q2}
             if isinstance(q1, bytes):
