@@ -59,7 +59,7 @@ PY2 = sys.version.startswith('2')
 
 #--------------------------------------------------------------------------------------------------
 
-def data_uri(path, default='application/octet-stream'):
+def dataurl(path, default='application/octet-stream'):
     """ Returns the data URI string for the given file.
     """
     type = mimetypes.guess_type(path)[0] or default
@@ -1477,7 +1477,7 @@ class Context(list):
         # Cache image data (once):
         if not id in self._defs:
             w, h = self.imagesize(path)
-            s = data_uri(path) # 'data:image/png;base64,...'
+            s = dataurl(path) # 'data:image/png;base64,...'
             s = '<image id="%s" width="%.0f" height="%.0f" href="%s" />' % (id, w, h, s)
             self._defs[id] = s
         w = self._defs[id].split('"')[3]
