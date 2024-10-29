@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '3.2.2'
+__version__   =  '3.2.3'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -5750,6 +5750,9 @@ class FormData(dict):
 def generic(code, traceback=''):
     return '<h1>%s %s</h1><pre>%s</pre>' % (code, STATUS[code], traceback)
 
+def mimetype(url):
+    return mimetypes.guess_type(url)[0] or 'application/octet-stream'
+
 WSGIServer, WSGIRequestHandler = (
     wsgiref.simple_server.WSGIServer,
     wsgiref.simple_server.WSGIRequestHandler
@@ -5917,7 +5920,7 @@ class App(ThreadPoolMixIn, WSGIServer):
             v = json.dumps(v)
         if hasattr(v, 'name') and \
            hasattr(v, 'read'):
-            r.headers['Content-Type' ] = mimetypes.guess_type(v.name)[0] or ''
+            r.headers['Content-Type' ] = mimetype(v.name)
             r.headers['Last-Modified'] = modified(v.name).format('%a, %d %b %Y %H:%M:%S GMT')
             v = v.read()
         if v is None:
@@ -6067,6 +6070,19 @@ App.session = \
 #         p['pw'] = 123
 # 
 # app.run()
+
+#---- APP DATA ------------------------------------------------------------------------------------
+
+def dataurl(path):
+    """ Returns a data URL from the given file path.
+    """
+    k = mimetype(path) # 'image/png'
+    v = open(path, 'rb')
+    v = v.read()
+    v = base64.b64encode(v)
+    v = v.decode('utf-8')
+    v = 'data:%s;base64,%s' % (k, v)
+    return v
 
 ##### NET #########################################################################################
 
