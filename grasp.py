@@ -1175,7 +1175,7 @@ def peaks(a, z=1):
     m = avg(a)
     s = sd(a) or 1
     p = ((v - m) / s for v in a)
-    p = (i for i, v in enumerate(p) if v > z)
+    p = (i for i, v in enumerate(p) if v >= z)
     p = sorted(p, key=lambda i: -a[i])
     return p
 
@@ -4616,9 +4616,9 @@ class Twitter(object):
                 v.get('tweet_id'   ) or '',
                 v.get('text'       ) or '',
                 v.get('created_at' ) or '',
-              ( v.get('lang'       ) or '').replace('und', ''),
+              ( v.get('lang'       ) or '').replace('und', '').replace('zxx', ''),
                 v.get('screen_name') or '',
-                v.get('favorites'  ) or '' 
+                v.get('favorites'  ) or 0
             )
 
         # id = r.get('next_cursor')
