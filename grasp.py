@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   =  '3.2.3'
+__version__   =  '3.2.4'
 __license__   =  'BSD'
 __credits__   = ['Tom De Smedt', 'Guy De Pauw', 'Walter Daelemans']
 __email__     =  'info@textgain.com'
@@ -11,7 +11,7 @@ __copyright__ =  'Textgain'
 
 ###################################################################################################
 
-# Copyright 2023 Textgain
+# Copyright 2025 Textgain
 #
 # Redistribution and use in source and binary forms, with or without modification, 
 # are permitted provided that the following conditions are met:
@@ -5413,6 +5413,31 @@ def article(url, cached=False, headers={'User-Agent': 'Grasp.py'}):
 #     title, text = article(story.url, cached=True)
 #     print(title.upper() + '\n')
 #     print(text + '\n\n')
+
+#---- MARKDOWN ------------------------------------------------------------------------------------
+# https://www.markdownguide.org/basic-syntax/
+
+def markdown(s):
+    """ Returns the HTML-formatted string.
+    """
+    s = s.strip()
+    s = re.sub(r'(^|\n)#{4} (.*?)(\n|$)'    , '\\1<h4>\\2</h4>\\3'       , s) # #### h4
+    s = re.sub(r'(^|\n)#{3} (.*?)(\n|$)'    , '\\1<h3>\\2</h3>\\3'       , s) # ### h3
+    s = re.sub(r'(^|\n)#{2} (.*?)(\n|$)'    , '\\1<h2>\\2</h2>\\3'       , s) # ## h2
+    s = re.sub(r'(^|\n)#{1} (.*?)(\n|$)'    , '\\1<h1>\\2</h1>\\3'       , s) # # h1
+    s = re.sub(r'\[(.*?)\]\((.*?)\)'        , '<a href="\\2">\\1</a>'    , s) # [a](href)
+    s = re.sub(r'\*{2}(?=\S)(.*?\S)\*{2}'   , '<b>\\1</b>'               , s) # **b**
+    s = re.sub(r'\*{1}(?=\S)(.*?\S)\*{1}'   , '<i>\\1</i>'               , s) # *i*
+    s = re.sub(r'\`{1}(?=\S)(.*?\S)\`{1}'   , '<code>\\1</code>'         , s) # `code`
+    s = re.sub(r'(^|\n)[-\*] (.*?)(?=\n|$)' , '\\1<ul><li>\\2</li></ul>' , s) # - li
+    s = re.sub(r'(^|\n)\d+\. (.*?)(?=\n|$)' , '\\1<ol><li>\\2</li></ol>' , s) # 1. ol
+    s = re.sub(r'(?m)</ul>\n<ul>'           , '\n'                       , s)
+    s = re.sub(r'(?m)</ol>\n<ol>'           , '\n'                       , s)
+    s = re.sub(r'(?s)(.*\S.*)'              , '<p>\\1</p>'               , s)
+    s = re.sub(r'\s*\n\s*\n\s*'             , '</p>\n\n<p>'              , s)
+    return s
+
+md = markdown
 
 ###################################################################################################
 
