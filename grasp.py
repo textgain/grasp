@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   = '3.4.2'
+__version__   = '3.4.3'
 __license__   = 'BSD'
 __email__     = 'info@textgain.com'
 __author__    = 'Textgain'
@@ -805,11 +805,13 @@ csvlib.field_size_limit(1000000000)
 class CSV(table):
 
     @classmethod
-    def rows(cls, path, separator=',', encoding='utf-8'):
+    def rows(cls, f, separator=',', encoding='utf-8'):
         """ Returns the given .csv file as an iterator of rows, 
             where each row is a list of values.
         """
-        f = open(path, 'rb')
+        try: f = open(f, 'rb')
+        except:
+            pass
         f = (s.replace(b'\r\n', b'\n') for s in f)
         f = (s.replace(b'\r'  , b'\n') for s in f)
         f = (s.replace(b'\0'  , b''  ) for s in f) # null byte
@@ -1570,30 +1572,34 @@ def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
 # Dimensionality reduction of vectors (i.e., fewer features) can speed up distance calculations.
 # This can be achieved by grouping related features (e.g., covariance) or by selecting features.
 
-def rp(vectors=[], n=100, distribution=(-1, +1)):
+def jlt(features, n=100, distribution=(-3 ** 0.5, 0, 0, 0, 0, +3 ** 0.5)):
+    """ Returns the (sparse) random projection matrix.
+        (Johnson-Lindenstrauss Transform)
+    """
+    return {f: choices(distribution, k=n) for f in features}
+
+def rp(vectors=[], n=100, r=None): # ~10 articles/sec | ~10x faster knn()
     """ Returns a list of vectors, each with n features.
         (Random Projection)
     """
     # Given a m x d matrix (m vectors, d features),
-    # build a d x n matrix from a Gaussian distribution.
+    # build a d x n matrix from Achlioptas distribution.
     # The dot product is the reduced vector space m x n.
-    h = features(vectors)
-    h = enumerate(h)
-    h = map(reversed, h)
-    h = dict(h) # {feature: int} hash
-    r = [[random.choice(distribution) for i in range(n)] for f in h]
+    r = r or jlt(features(vectors), n)
     p = []
-    for v in vectors:
-        p.append([])
+    for v1 in vectors:
+        v2 = {}
         for i in range(n):
             x = 0
-            for f, w in v.items():
-                x += w * r[h[f]][i] # dot product
-            p[-1].append(x)
-    p = map(enumerate, p)
-    p = map(dict, p)
-    p = list(p)
+            for f, w in v1.items():
+                if f in r:
+                    x += w * r[f][i] # dot product
+            if x:
+                v2[i] = x
+        p.append(v2)
     return p
+
+# Note: cos() with rp() vectors may not return 0.0-1.0.
 
 def matrix(vectors=[]):
     """ Returns a 2D numpy.ndarray of the given vectors, 
@@ -3172,8 +3178,8 @@ def mark(s, matches=[], format=lambda w: ' '.join(w), tag=('<mark class="{}">', 
     f += encode(s[o:])
     return f
 
-# s = 'Klaatu stirs!'
-# t = trie({'Klaatu': 'cat'})
+# s = 'Rambo stirs!'
+# t = trie({'Rambo': 'cat'})
 # m = t.search(s)
 # 
 # print(mark(s, m))
@@ -3373,6 +3379,27 @@ def decamel(s, separator="_"):
     return s
 
 # print(decamel('HTTPError404NotFound')) # http_error_404_not_found
+
+stopwords = sw = {
+    'en': (
+        'a about all an and are as at be because but by can do for '  + \
+        'from get go had has have he i if in is it like me my not '   + \
+        'of on or so she some than that the then there they this to ' + \
+        'was we were what when where which who will with would you'
+    ).split(),
+    'nl' : (
+        'aan al als bij een en er dan dat de die dit door heeft het ' + \
+        'hij ik in is kan maar met na naar niet nog of om ook op te ' + \
+        'tot uit van voor waar was wat we werd wordt zal ze zij zijn zo'
+    ).split()
+}
+
+def destop(s, language='en'):
+    """ Returns the string without stop words (a, an, the, ...).
+    """
+    return re.sub(r'(?i)\b(%s)\b' % '|'.join(sw.get(language, ())), '', s)
+
+# print(destop('What would a cat do in this case?'))
 
 def sg(w, language='en', known={'aunties': 'auntie'}):
     """ Returns the singular of the given plural noun.
@@ -4108,6 +4135,63 @@ def keywords(s, language='en', n=10):
 kw = keywords
 
 # print(kw('Boo Boo needs chow.'))
+
+#---- SEMANTIC SEARCH -----------------------------------------------------------------------------
+# Semantic search aims to find better contextual matches by vectorizing documents.
+
+class Vectors(tuple):
+
+    def __new__(cls, path=None, documents=[], features=('c3',), language=None): 
+        """ Returns a vector space for naive semantic search in given documents.
+        """
+        try:
+            r = json.load(open(path, 'rb'))
+        except:
+            r = {}
+        finally:
+            r = super().__new__(cls, (
+               r.get( 'documents'  , documents ),
+               r.get( 'features'   , features  ),
+               r.get( 'language'   , language  ),
+               r.get( 'embeddings' , []        ),
+            ))
+        if not r[-1]:
+               r[-1].extend(map(r.v, r[0])) # embed
+        return r
+
+    def v(self, s):
+        return vec(destop(s.lower(), self[2]), self[1])
+
+    def search(self, s, k=10, similarity=0.0):
+        """ Returns an iterator of matching documents.
+        """
+        for d, v in knn(self.v(s), self[-1], k):
+            if d >= similarity:
+                yield self[0][self[-1].index(v)]
+
+    def save(self, path):
+        with open(path, 'w') as f:
+            f.write(json.dumps({
+                'documents'  : self[0],
+                'features'   : self[1],
+                'language'   : self[2],
+                'embeddings' : self[3],
+            }))
+
+# v = Vectors(language='en', documents=[
+#     'the cat meows sadly', 
+#     'the dog barks badly', 
+#     'cats tap their prey', 
+#     'dogs wag their tail',
+# ])
+
+# v.save(
+#     'vec.json')
+# v = Vectors(
+#     'vec.json')
+
+# for doc in v.search('Who is barking?', 1):
+#     print(doc)
 
 #---- SENTIMENT ANALYSIS --------------------------------------------------------------------------
 # Sentiment analysis aims to determine the affective state of (subjective) text,
@@ -6128,6 +6212,14 @@ class App(ThreadPoolMixIn, WSGIServer):
         self.server_activate()
         self.serve_forever()
 
+    @property
+    def host(self):
+        return self.server_address[0]
+
+    @property
+    def port(self):
+        return self.server_address[1]
+
     def route(self, path, rate=None, key=lambda request: request.ip):
         """ The @app.route(path) decorator defines the handler for the given path.
             The handler(*path, **query) returns a str or dict for the given path. 
@@ -6262,6 +6354,10 @@ class App(ThreadPoolMixIn, WSGIServer):
         # https://www.python.org/dev/peps/pep-0333/#the-start-response-callable
         start_response('%s %s' % (r.code, status[r.code]), list(r.headers.items()))
         return [b(v)]
+
+    def stop(self):
+        self.shutdown()
+        self.up = False
 
 # app = application = App(threads=10)
 
