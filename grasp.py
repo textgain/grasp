@@ -1572,11 +1572,12 @@ def kmeans(vectors=[], k=3, distance=euclidean, iterations=100, n=10):
 # Dimensionality reduction of vectors (i.e., fewer features) can speed up distance calculations.
 # This can be achieved by grouping related features (e.g., covariance) or by selecting features.
 
-def jlt(features, n=100, distribution=(-3 ** 0.5, 0, 0, 0, 0, +3 ** 0.5)):
+def jlt(features, n=100, distribution=(-1.732, 0, 0, 0, 0, +1.732)): # √3 = 1.732...
     """ Returns the (sparse) random projection matrix.
         (Johnson-Lindenstrauss Transform)
     """
-    return {f: choices(distribution, k=n) for f in features}
+    # Cast to str() so dict can be serialized as JSON.
+    return {f: {str(i): w for i, w in enumerate(choices(distribution, k=n)) if w} for f in features}
 
 def rp(vectors=[], n=100, r=None): # ~10 articles/sec | ~10x faster knn()
     """ Returns a list of vectors, each with n features.
@@ -1586,20 +1587,22 @@ def rp(vectors=[], n=100, r=None): # ~10 articles/sec | ~10x faster knn()
     # build a d x n matrix from Achlioptas distribution.
     # The dot product is the reduced vector space m x n.
     r = r or jlt(features(vectors), n)
+    n = range(n)
+    n = map(str, n)
+    n = list(n)
     p = []
     for v1 in vectors:
         v2 = {}
-        for i in range(n):
+        for i in n:
             x = 0
             for f, w in v1.items():
                 if f in r:
-                    x += w * r[f][i] # dot product
+                    if i in r[f]:
+                        x += w * r[f][i] # dot product
             if x:
                 v2[i] = x
         p.append(v2)
     return p
-
-# Note: cos() with rp() vectors may not return 0.0-1.0.
 
 def matrix(vectors=[]):
     """ Returns a 2D numpy.ndarray of the given vectors, 
@@ -3382,15 +3385,30 @@ def decamel(s, separator="_"):
 
 stopwords = sw = {
     'en': (
-        'a about all an and are as at be because but by can do for '  + \
-        'from get go had has have he i if in is it like me my not '   + \
-        'of on or so she some than that the then there they this to ' + \
-        'was we were what when where which who will with would you'
+        u"a about all an and are as at be because but by can do for "  + \
+        u"from get go had has have he i if in is it like me my not "   + \
+        u"of on or so she some than that the then there they this to " + \
+        u"was we were what when where which who will with would you"
+    ).split(),
+    'es' : (
+        u"a como con cuando de desde en el es esta entre este fue ha " + \
+        u"han hasta la las le lo los más muy no o para pero por que "  + \
+        u"si se ser sobre sin son su sus también un una y ya"
+    ).split(),
+    'de' : (
+        u"aber als an auch auf aus bei das dass dem den der des die "  + \
+        u"ein eine einem einen es für hat in ist mit nach nicht noch " + \
+        u"nur oder sich sie sind von werden wie wird vor über um und zu"
+    ).split(),
+    'fr' : (
+        u"a à avec c' ce cette comme d' dans de des en est et été il " + \
+        u"la le les mais n' ne ont ou par pas plus pour qu' que qui "  + \
+        u"sa se ses son sont s' sur tout un une "
     ).split(),
     'nl' : (
-        'aan al als bij een en er dan dat de die dit door heeft het ' + \
-        'hij ik in is kan maar met na naar niet nog of om ook op te ' + \
-        'tot uit van voor waar was wat we werd wordt zal ze zij zijn zo'
+        u"aan al als bij een en er dan dat de die dit door heeft het " + \
+        u"hij ik in is kan maar met na naar niet nog of om ook op te " + \
+        u"tot uit van voor waar was wat we werd wordt zal ze zij zijn zo"
     ).split()
 }
 
@@ -4153,21 +4171,35 @@ class Vectors(tuple):
                r.get( 'documents'  , documents ),
                r.get( 'features'   , features  ),
                r.get( 'language'   , language  ),
+               r.get( 'transform'  , []        ),
                r.get( 'embeddings' , []        ),
             ))
         if not r[-1]:
-               r[-1].extend(map(r.v, r[0])) # embed
+               r[-1].extend(map(r._v, r[0])) # embed
         return r
 
-    def v(self, s):
-        return vec(destop(s.lower(), self[2]), self[1])
+    @property
+    def documents(self):
+        return self[0]
+
+    def _t(self, v):
+        return rp((v,), *self[3])[0] if self[3] else v
+
+    def _v(self, s):
+        return self._t(vec(destop(s.lower(), self[2]), self[1]))
+
+    def reduce(self, n=100):
+        """ Reduces the vector space to n dimensions.
+        """
+        self[3][:] = n, jlt(features(self[-1]), n) # projection matrix
+        self[4][:] = rp(self[4], *self[3])
 
     def search(self, s, k=10, similarity=0.0):
         """ Returns an iterator of matching documents.
         """
-        for d, v in knn(self.v(s), self[-1], k):
+        for d, v in knn(self._v(s), self[4], k):
             if d >= similarity:
-                yield self[0][self[-1].index(v)]
+                yield self[0][self[4].index(v)]
 
     def save(self, path):
         with open(path, 'w') as f:
@@ -4175,8 +4207,11 @@ class Vectors(tuple):
                 'documents'  : self[0],
                 'features'   : self[1],
                 'language'   : self[2],
-                'embeddings' : self[3],
+                'transform'  : self[3],
+                'embeddings' : self[4],
             }))
+
+SemanticSearch = VectorSpace = Vectors
 
 # v = Vectors(language='en', documents=[
 #     'the cat meows sadly', 
@@ -4303,7 +4338,7 @@ cooc = cooccurrence
 
 # print(cooc('the cat sat on the mat', 1))['the']
 
-class Embedding(collections.OrderedDict):
+class WordEmbeddings(collections.OrderedDict):
 
     def __init__(self, s, m=10000, n=100, reduce=lambda v, n: [v.most_common(n) for v in v], **kwargs):
         """ Returns a dict of (word, context)-items, where context is 
@@ -4373,8 +4408,6 @@ class Embedding(collections.OrderedDict):
 
         return e
 
-Embeddings = Embedding
-
 def add(v1, v2):
     return {f: v1.get(f, 0) + v2.get(f, 0) for f in features((v1, v2))}
 
@@ -4383,7 +4416,7 @@ def sub(v1, v2):
 
 # e = open('glove.6B.50d.txt')
 # e = sliced(e, 0, 100000)
-# e = Embedding.load(e, 'txt')
+# e = WordEmbeddings.load(e, 'txt')
 
 # print(e.similar('king', 10)) # = president, emperor, leader
 # print(e.similar(add(sub(e['king'], e['man']), e['woman']))) # = queen
