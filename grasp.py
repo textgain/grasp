@@ -1395,7 +1395,7 @@ def dot(v1, v2):
 def norm(v):
     """ Returns the norm of the given vector.
     """
-    return sum(w ** 2 for f, w in v.items()) ** 0.5
+    return sum(w ** 2 for f, w in v.items()) ** 0.5 # L2
 
 def cos(v1, v2):
     """ Returns the angle of the given vectors (0.0-1.0).
@@ -1447,7 +1447,7 @@ def scale(v, x=0.0, y=1.0):
         w = list(itertools.chain(*w)) or [0]
         a = min(w)
         b = max(w)
-        return [{f: float(v[f] - a) / (b - a or 1) * (y - x) + x for f in v} for v in v]
+        return [{f: float(v[f] - a) / (b - a or 1) * (y - x) + x for f in v} for v in v] # min-max
     else:
         return scale((v,), x, y)[0]
 
@@ -1579,7 +1579,7 @@ def jlt(features, n=100, distribution=(-1.732, 0, 0, 0, 0, +1.732)): # √3 = 1.
     # Cast to str() so dict can be serialized as JSON.
     return {f: {str(i): w for i, w in enumerate(choices(distribution, k=n)) if w} for f in features}
 
-def rp(vectors=[], n=100, r=None): # ~10 articles/sec | ~10x faster knn()
+def rp(vectors=[], n=100, r=None, normalize=unit): # ~10 articles/sec | ~10x faster knn()
     """ Returns a list of vectors, each with n features.
         (Random Projection)
     """
@@ -1601,7 +1601,7 @@ def rp(vectors=[], n=100, r=None): # ~10 articles/sec | ~10x faster knn()
                         x += w * r[f][i] # dot product
             if x:
                 v2[i] = x
-        p.append(v2)
+        p.append(normalize(v2))
     return p
 
 def matrix(vectors=[]):
@@ -4163,7 +4163,7 @@ class Vectors(tuple):
         """ Returns a vector space for naive semantic search in given documents.
         """
         try:
-            r = json.load(open(path, 'rb'))
+            r = json.load(path if hasattr(path, 'read') else open(path, 'rb'))
         except:
             r = {}
         finally:
@@ -4186,9 +4186,9 @@ class Vectors(tuple):
         return rp((v,), *self[3])[0] if self[3] else v
 
     def _v(self, s):
-        return self._t(vec(destop(s.lower(), self[2]), self[1]))
+        return self._t(unit(vec(destop(s.lower(), self[2]), self[1])))
 
-    def reduce(self, n=100):
+    def reduce(self, n=200): # ~20% smaller, 20x faster w/ 1K articles
         """ Reduces the vector space to n dimensions.
         """
         self[3][:] = n, jlt(features(self[-1]), n) # projection matrix
@@ -4214,18 +4214,19 @@ class Vectors(tuple):
 SemanticSearch = VectorSpace = Vectors
 
 # v = Vectors(language='en', documents=[
-#     'the cat meows sadly', 
-#     'the dog barks badly', 
-#     'cats tap their prey', 
-#     'dogs wag their tail',
+#     'the cat naps on the mat', 
+#     'the dog nips at the hat', 
+#     'cats purr when happy', 
+#     'dogs bark when angry',
 # ])
 
+# v.reduce(50)
 # v.save(
 #     'vec.json')
 # v = Vectors(
 #     'vec.json')
 
-# for doc in v.search('Who is barking?', 1):
+# for doc in v.search('Who is napping?', 1):
 #     print(doc)
 
 #---- SENTIMENT ANALYSIS --------------------------------------------------------------------------
