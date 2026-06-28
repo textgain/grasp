@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   = '3.4.6'
+__version__   = '3.4.7'
 __license__   = 'BSD'
 __email__     = 'info@textgain.com'
 __author__    = 'Textgain'
@@ -3547,8 +3547,9 @@ def loc(s, country=None):
         m = loc.m
 
     f = m.search(s)
-    f = (m.tag for m in f)
-    f = (m for m in f if not country or country == m.country)
+    f = [m for m in f if not country or country == m.tag.country]
+    f = [m for m in f if not any(subs(_, m) for _ in f)] # 'New York' > 'York'
+    f = [m.tag for m in f]
     f = collections.Counter(f)
     return f
 
