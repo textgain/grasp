@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   = '3.4.3'
+__version__   = '3.4.6'
 __license__   = 'BSD'
 __email__     = 'info@textgain.com'
 __author__    = 'Textgain'
@@ -52,6 +52,7 @@ __copyright__ = 'Textgain'
 
 import sys
 import os
+import gc
 import io
 import re
 import platform
@@ -86,6 +87,7 @@ import json
 import zipfile
 import tempfile
 import mimetypes
+import types
 import glob
 import time
 import datetime
@@ -492,6 +494,24 @@ def debug(file=sys.stdout, format=SIGNED, date='%Y-%m-%d %H:%M:%S'):
 
 #---- RAM -----------------------------------------------------------------------------------------
 
+def sizeof(v, seen=None):
+    """ Returns the current memory size (in bytes) of the given valiue.
+    """
+    seen = seen or set()
+    if isinstance(v, types.ModuleType):
+        return 0
+    if isinstance(v, types.FunctionType):
+        return 0
+    if isinstance(v, type):
+        return 0
+    if id(v) in seen:
+        return 0
+    else:
+        seen.add(id(v))
+        return sys.getsizeof(v) + sum(sizeof(v, seen) for v in gc.get_referents(v))
+
+# print(sizeof([1, 2, 3]))
+
 class Trace(object):
 
     @property
@@ -809,9 +829,7 @@ class CSV(table):
         """ Returns the given .csv file as an iterator of rows, 
             where each row is a list of values.
         """
-        try: f = open(f, 'rb')
-        except:
-            pass
+        f = open(f, 'rb') if isinstance(f, basestring) or hasattr(f, '__fspath__') else f
         f = (s.replace(b'\r\n', b'\n') for s in f)
         f = (s.replace(b'\r'  , b'\n') for s in f)
         f = (s.replace(b'\0'  , b''  ) for s in f) # null byte
@@ -2726,9 +2744,12 @@ class Calibrated(Model):
     def predict(self, v, *args, **kwargs):
         """ Returns the label's calibrated probability (0.0-1.0).
         """
-        p = self._model.predict(v, *args, **kwargs)[self._label] 
-        p = self._f['%.2f' % p] + 0
-        p = {self._label: p}
+        p = self._model.predict(v, *args, **kwargs) # {1: 0.5, 0: 0.5}
+        y = p.pop(self._label)                      #     0.5
+        y = self._f['%.2f' % y] + 0                 #     0.6
+        w = (1 - y) / (sum(p.values()) or 1)
+        p = {k: v * w for k, v in p.items()}        # {1: 0.6, 0: 0.4}
+        p[self._label] = y
         return p
 
     @property
@@ -3807,7 +3828,7 @@ class Tagged(list):
 
 tagger = LazyDict() # {'en': Model}
 
-for f in ls('*-pos.json.zip'):
+for f in ls('*-pos.json.zip'): # UD
     tagger[f[-15:-13]] = lambda f=f: Perceptron.load(unzip(f))
 #                                ^ early binding
 
@@ -4157,58 +4178,62 @@ kw = keywords
 #---- SEMANTIC SEARCH -----------------------------------------------------------------------------
 # Semantic search aims to find better contextual matches by vectorizing documents.
 
-class Vectors(tuple):
+class Vectors(object):
 
-    def __new__(cls, path=None, documents=[], features=('c3',), language=None): 
+    def __init__(self, path=None, documents=[], features=('c3',), language=None):
         """ Returns a vector space for naive semantic search in given documents.
         """
         try:
-            r = json.load(path if hasattr(path, 'read') else open(path, 'rb'))
+            v = json.load(path if hasattr(path, 'read') else open(path, 'rb'))
         except:
-            r = {}
+            v = {}
         finally:
-            r = super().__new__(cls, (
-               r.get( 'documents'  , documents ),
-               r.get( 'features'   , features  ),
-               r.get( 'language'   , language  ),
-               r.get( 'transform'  , []        ),
-               r.get( 'embeddings' , []        ),
-            ))
-        if not r[-1]:
-               r[-1].extend(map(r._v, r[0])) # embed
-        return r
+            v = self._ = (
+               v.get( 'documents'  , documents ),
+               v.get( 'features'   , features  ),
+               v.get( 'language'   , language  ),
+               v.get( 'transform'  , []        ),
+               v.get( 'embeddings' , []        ),
+            )
+        if not v[-1]:
+               v[-1].extend(map(self._v, v[0])) # embed
 
     @property
     def documents(self):
-        return self[0]
+        return iter(self._[0])
 
     def _t(self, v):
-        return rp((v,), *self[3])[0] if self[3] else v
+        return rp((v,), *self._[3])[0] if self._[3] else v
 
     def _v(self, s):
-        return self._t(unit(vec(destop(s.lower(), self[2]), self[1])))
+        return self._t(unit(vec(destop(s.lower(), self._[2]), self._[1])))
 
     def reduce(self, n=200): # ~20% smaller, 20x faster w/ 1K articles
         """ Reduces the vector space to n dimensions.
         """
-        self[3][:] = n, jlt(features(self[-1]), n) # projection matrix
-        self[4][:] = rp(self[4], *self[3])
+        self._[3][:] = n, jlt(features(self._[4]), n) # projection matrix
+        self._[4][:] = rp(self._[4], *self._[3])
 
-    def search(self, s, k=10, similarity=0.0):
+    def search(self, s, k=3, similarity=0.0):
         """ Returns an iterator of matching documents.
         """
-        for d, v in knn(self._v(s), self[4], k):
+        for d, v in knn(self._v(s), self._[4], k):
             if d >= similarity:
-                yield self[0][self[4].index(v)]
+                yield self._[0][self._[4].index(v)]
+
+    def append(self, document):
+        self._[0].append(document)
+        self._[4].append(self._v(document))
+        # (ignores new features if reduced)
 
     def save(self, path):
         with open(path, 'w') as f:
             f.write(json.dumps({
-                'documents'  : self[0],
-                'features'   : self[1],
-                'language'   : self[2],
-                'transform'  : self[3],
-                'embeddings' : self[4],
+                'documents'  : self._[0],
+                'features'   : self._[1],
+                'language'   : self._[2],
+                'transform'  : self._[3],
+                'embeddings' : self._[4],
             }))
 
 SemanticSearch = VectorSpace = Vectors
@@ -4219,13 +4244,13 @@ SemanticSearch = VectorSpace = Vectors
 #     'cats purr when happy', 
 #     'dogs bark when angry',
 # ])
-
+# 
 # v.reduce(50)
 # v.save(
 #     'vec.json')
 # v = Vectors(
 #     'vec.json')
-
+# 
 # for doc in v.search('Who is napping?', 1):
 #     print(doc)
 
@@ -4605,6 +4630,7 @@ class BadGateway      (Exception): pass # 502
 class BadRequest      (Exception): pass # 400
 class Forbidden       (Exception): pass # 403
 class NotFound        (Exception): pass # 404
+class NotAllowed      (Exception): pass # 405
 class TooManyRequests (Exception): pass # 429
 class Timeout         (Exception): pass
 
@@ -4636,6 +4662,8 @@ def request(url, data={}, headers={}, timeout=10):
     except urllib.error.URLError as e:
       # print(e.read())
         status = getattr(e, 'code', None) # HTTPError
+        if status == 405:
+            raise NotAllowed
         if status == 404:
             raise NotFound
         if status == 403:
@@ -4921,7 +4949,7 @@ class Bluesky(object):
     def __call__(self, *args, **kwargs):
         return self.search(*args, **kwargs)
 
-bluesky = Bluesky()
+bsky = bluesky = Bluesky()
 
 # for post in bluesky('cats', language='en'):
 #     print(post.text)
@@ -5079,6 +5107,7 @@ keys['GPT'] = ''
 
 class Q(unicode): pass
 class A(unicode): pass
+class I(unicode): pass
 
 def discrete(v, a=0, b=10):
     """ Returns the float (0.0-1.0) as an int from a to b.
@@ -5087,16 +5116,18 @@ def discrete(v, a=0, b=10):
 
 # print(discrete(0.5, 0, 10)) # 5
 
-def gpt(q, reasoning=0.0, delay=0.5, timeout=30, cached=False, debug=False, key=None, model='gpt-5-mini'):
+def gpt(q, reasoning=0.0, delay=0.5, timeout=30, cached=False, debug=False, key=None, model='gpt-5.4-nano'):
     """ Returns ChatGPT's response as a string.
     """
-    if not isinstance(q, list): # [Q, A, ...] conversation
+    if isinstance(q, basestring): # [Q, A, ...] conversation
         q = [Q(q)]
     for i, s in enumerate(q):
         if type(s) is Q:
             q[i] = { 'content': s, 'role': 'user'      }
         if type(s) is A:
             q[i] = { 'content': s, 'role': 'assistant' }
+        if type(s) is I:
+            q[i] = { 'content': s, 'role': 'system'    }
 
     # Reasoning uses extra output tokens https://openai.com/api/pricing
     e = ['minimal', 'low', 'medium', 'high'][discrete(reasoning, 0, 3)]
@@ -5113,23 +5144,20 @@ def gpt(q, reasoning=0.0, delay=0.5, timeout=30, cached=False, debug=False, key=
     r = json.loads(u(r))
     n = r['usage'  ]
     k = r['output' ][0]['id'] # reasoning id
-    r = r['output' ][1]
-    r = r['content'][0]['text']
-    r = r.strip()
+    a = r['output' ][1]
+    a = a['content'][0]['text']
+    a = a.strip()
 
-    if debug: # cost?
-        I = n[ 'input_tokens']
-        O = n['output_tokens']
-        R = n['output_tokens_details']['reasoning_tokens']
+    i = n[ 'input_tokens']
+    o = n['output_tokens']
+    r = n['output_tokens_details']['reasoning_tokens']
 
-        if model == 'gpt-5':
-            print('I:%i O:%i R:%i = $%.4f' % (I, O - R, R, I * 1.25 / 1e6 + R * 10.0 / 1e6))
-        if model == 'gpt-5-mini':
-            print('I:%i O:%i R:%i = $%.4f' % (I, O - R, R, I * 0.25 / 1e6 + R *  2.0 / 1e6))
-        if model == 'gpt-5-nano':
-            print('I:%i O:%i R:%i = $%.4f' % (I, O - R, R, I * 0.05 / 1e6 + R *  0.4 / 1e6))
+    if debug and model == 'gpt-5.4-mini':
+        print('I:%i O:%i R:%i = $%.4f' % (i, o - r, r, i * 0.75 / 1e6 + o * 4.50 / 1e6))
+    if debug and model == 'gpt-5.4-nano':
+        print('I:%i O:%i R:%i = $%.4f' % (i, o - r, r, i * 0.20 / 1e6 + o * 1.25 / 1e6))
 
-    return r
+    return a
 
 # q = 'You are a comedian. What is Earth?'
 # q = 'Write like a child. What is Earth?'
@@ -6366,6 +6394,8 @@ class App(ThreadPoolMixIn, WSGIServer):
                 r.code = 404
             elif isinstance(e, NotFound):
                 r.code = 404
+            elif isinstance(e, NotAllowed):
+                r.code = 405
             elif isinstance(e, Forbidden):
                 r.code = 403
             elif isinstance(e, TooManyRequests):
