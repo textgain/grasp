@@ -1,4 +1,4 @@
-// graph.js v3.3.
+// graph.js v3.5.
 // (c) Textgain
 
 // --- RANDOM -------------------------------------------------------------------------------------
@@ -11,6 +11,9 @@ Random.prototype.seed = function(v) {
 };
 Random.prototype.random = function() {
 	return (this.v = (this.v * 22695477 + 1) % 2 ** 32) / 2 ** 32; // LCG
+};
+Random.prototype.shuffle = function(a) {
+	return a.map(v => [this.random(), v]).sort().map(v => v[1]);
 };
 
 random = new Random();
@@ -200,7 +203,7 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 	ctx.fill();
 	ctx.strokeStyle = o.stroke;
 	ctx.stroke();
-
+	
 	// Draw nodes:
 	for (let n in this.nodes) {
 		let p = this.nodes[n];
@@ -212,7 +215,7 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 		ctx.fill();
 		ctx.stroke();
 	}
-
+	
 	// Draw labels:
 	ctx.font = o.font;
 	for (let n in this.nodes) {
@@ -270,7 +273,7 @@ Graph.prototype.stop = function() {
 	this._busy = false;
 };
 
-// --- GRAPH ANALYTICS ----------------------------------------------------------------------------
+// --- GRAPH ANALYTICS (CENTRALITY) ---------------------------------------------------------------
 
 Graph.prototype.rank = function(m=1.0) {
 	/* Updates node weights with PageRank.
@@ -280,7 +283,7 @@ Graph.prototype.rank = function(m=1.0) {
 		this.nodes[n].w = w * m;
 };
 
-Graph.prototype.centrality = function(d=0.85) {
+Graph.prototype.centrality = function(iterations=100, d=0.85) {
 	/* Returns a {node: weight} (0.0-1.0),
 	 * based on Google PageRank algorithm.
 	 */
@@ -291,7 +294,8 @@ Graph.prototype.centrality = function(d=0.85) {
 	let w = {};
 	for (let k in n)
 		w[k] = 1 / len(n);
-	for (let i=0; i<100; i++) {
+	
+	while (iterations-- > 0) {
 		let p = {...w};
 		for (let k1 in n) {
 			for (let k2 in e[k1] || {})
@@ -330,7 +334,66 @@ Graph.prototype.nn = function(n, depth=1) {
 		a2.clear();
 	}
 	return a1;
-}
+};
+
+// --- GRAPH ANALYTICS (COMMUNITY) ----------------------------------------------------------------
+
+Graph.prototype.communities = function(iterations=10, state) {
+	/* Returns sorted sets of nodes, largest-first.
+	 */
+	let n = Object.keys(this.nodes);
+	let a = {};
+	let c = {} && state || {}; // warm start?
+	let k;
+	for (k of n) // label
+		c[k] ??= k;
+	while (iterations-- > 0) {
+		for (k of random.shuffle(n)) {
+			let f = {};
+			let w = 0;
+			let x;
+			for (let e in this.edges[k]) {
+				f[c[e]] = (f[c[e]] || 0) + Object.keys(this.edges[e]).length; // label propagation
+				if (w < f[c[e]]) {
+					w = f[c[e]];
+					x =   c[e];
+				}
+			}
+			if (w) c[k] = x;
+		};
+	}
+	for (k in c) {
+		a[c[k]] ||= new Set();
+		a[c[k]].add(k);
+	}
+	return Object.values(a).sort((a, b) => b.size - a.size);
+};
+
+aggregate = function(graph, communities, iterations=2) {
+	/* Returns sorted sets of aggregated communities.
+	 */
+	let c = communities.map(n => [...n]); // Set → Array
+	let x = {};
+	let y = {};
+	let a = [];
+	c.forEach((n, i) => {
+		 n.forEach(n => x[n] = String(i));
+	});
+	c.forEach((n, i) => {
+		 n = n.map(n => graph.edges[n] || {});
+		 n = n.map(n => Object.keys(n)).flat();
+		 n = n.map(n => [x[n], 1]); // Louvain coarsening
+		 n = Object.fromEntries(n);
+		 y[i] = n;
+	});
+	a = new Graph(y);
+	a = a.communities(iterations);
+	a = a.map(n => [...n]);
+	a = a.map(n => n.flatMap(n => c[n]));
+	a = a.map(n => new Set(n));
+	a = a.sort((a, b) => b.size - a.size);
+	return a;
+};
 
 // --- GRAPH SERIALIZATION ------------------------------------------------------------------------
 
