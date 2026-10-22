@@ -2,7 +2,7 @@
 
 ##### GRASP.PY ####################################################################################
 
-__version__   = '3.5.0'
+__version__   = '3.5.5'
 __license__   = 'BSD'
 __email__     = 'info@textgain.com'
 __author__    = 'Textgain'
@@ -872,6 +872,9 @@ class CSV(table):
             a.append(r)
         return u'\n'.join(a)
 
+    def copy(self, name=''):
+        return CSV(name, self.separator, (list(r) for r in self))
+
     def save(self, name=''):
         f = io.open(name or self.name, 'w', encoding='utf-8')
         f.write(self.serialize())
@@ -1068,9 +1071,9 @@ def concat(a, format='%s', separator=', '):
 def op(v):
   # op([1, 2, 3]) => 'in (?, ?, ?)', (1, 2, 3)
     def esc(v):
-        v = v.replace('_', '\_')
-        v = v.replace('%', '\%')
-        v = v.replace('*',  '%')
+        v = v.replace('_', r'\_')
+        v = v.replace('%', r'\%')
+        v = v.replace('*',   '%')
         return v
     if v is None:
         return 'is null', ()
@@ -3638,7 +3641,7 @@ breaks = {
        (r'\r'                                      , '\n'           ), # \n
        (r' " (.*?) " '                             , ' "< \\1 >" '  ), # "< Oh >"
        (r" ' (.*?) ' "                             , " '< \\1 >' "  ), # '< Oh >'
-       (u' (…|\.+) (?=[A-Z])'                      , ' \\1 \n '     ), #  Oh… \n Wow
+       (r' (…|\.+) (?=[A-Z])'                      , ' \\1 \n '     ), #  Oh… \n Wow
        (r' ([.!?]) (?=[^.!?])'                     , ' \\1 \n '     ), #  Oh! \n Wow
        (u' ([.!?]) \n (>"|>\'|”|’)'                , ' \\1 \\2 \n'  ), # “Oh!”\n Wow
        (u' ([!?]) \n ([–—] [a-z])'                 , ' \\1 \\2'     ), # –Oh!–
@@ -4021,11 +4024,11 @@ _RE_TAG = '|'.join(map(re.escape, TAG)) # NAME|NOUN|\:\)|...
 def chunk(pattern, text, replace=[], language='en'):
     """ Returns an iterator of matching Phrase objects in the given tagged text.
         The search pattern is a sequence of tokens (laugh-, -ing), tags (VERB), 
-        token/tags (-ing/VERB), escaped characters (:\)) or control characters: 
+        token/tags (-ing/VERB), escaped characters (:\\)) & control characters: 
         - ^ $ begin/end
         - ( ) group
         -  |  options: NOUN|PRON CONJ|,
-        -  *  0+ tags: NOUN*
+        -  *  0+ tags: NOUN*r
         -  +  1+ tags: NOUN+
         -  ?  <2 tags: NOUN?
     """
@@ -4071,7 +4074,7 @@ def chunk(pattern, text, replace=[], language='en'):
         w = '(?:%s )%s' % (w, x)                            # '(?:(?:-ing/[A-Z]+) )+'
         w = re.sub(r'\(\?:-', r'(?:\\S*', w)                #     '\S*ing/[A-Z]+'
         w = re.sub(r'\(\?:(\S*)-/', r'(?:\\b\1\\S*', w)
-        w = re.sub(r'\/', '\\\/', w)
+        w = re.sub(r'\/', r'\\/', w)
         p.append(w)
 
     p = '(%s)' % ''.join(p)
@@ -5120,7 +5123,7 @@ def discrete(v, a=0, b=10):
 
 # print(discrete(0.5, 0, 10)) # 5
 
-def gpt(q, reasoning=0.0, delay=0.5, timeout=30, cached=False, debug=False, key=None, model='gpt-5.4-nano'):
+def gpt(q, reasoning=0.25, delay=0.5, timeout=30, cached=False, debug=False, key=None, model='gpt-6-luna'):
     """ Returns ChatGPT's response as a string.
     """
     if isinstance(q, basestring): # [Q, A, ...] conversation
@@ -5134,7 +5137,7 @@ def gpt(q, reasoning=0.0, delay=0.5, timeout=30, cached=False, debug=False, key=
             q[i] = { 'content': s, 'role': 'system'    }
 
     # Reasoning uses extra output tokens https://openai.com/api/pricing
-    e = ['minimal', 'low', 'medium', 'high'][discrete(reasoning, 0, 3)]
+    e = ['none', 'low', 'medium', 'high', 'xhigh'][discrete(reasoning, 0, 4)]
 
     r  = 'https://api.openai.com/v1/responses', {
          'model'         : model,
@@ -5146,20 +5149,22 @@ def gpt(q, reasoning=0.0, delay=0.5, timeout=30, cached=False, debug=False, key=
     }
     r = download(*r, delay=delay, cached=cached, timeout=timeout)
     r = json.loads(u(r))
-    n = r['usage'  ]
-    k = r['output' ][0]['id'] # reasoning id
-    a = r['output' ][1]
-    a = a['content'][0]['text']
+    n = r.get('usage', {})
+    k = r.get('previous_response_id')
+    a = r.get('output' , [{}])[-1]
+    a = a.get('content', [{}])[0]
+    a = a.get('text', '')
     a = a.strip()
 
-    i = n[ 'input_tokens']
-    o = n['output_tokens']
-    r = n['output_tokens_details']['reasoning_tokens']
+    i = n.get( 'input_tokens', 0)
+    o = n.get('output_tokens', 0)
+    r = n.get('output_tokens_details', {})
+    r = r.get('reasoning_tokens', 0)
 
-    if debug and model == 'gpt-5.4-mini':
-        print('I:%i O:%i R:%i = $%.4f' % (i, o - r, r, i * 0.75 / 1e6 + o * 4.50 / 1e6))
-    if debug and model == 'gpt-5.4-nano':
-        print('I:%i O:%i R:%i = $%.4f' % (i, o - r, r, i * 0.20 / 1e6 + o * 1.25 / 1e6))
+    if debug and model == 'gpt-6-sol':
+        print('I:%i O:%i R:%i = $%.4f' % (i, o - r, r, i * 2.00 / 1e6 + o * 10.0 / 1e6))
+    if debug and model == 'gpt-6-luna':
+        print('I:%i O:%i R:%i = $%.4f' % (i, o - r, r, i * 0.10 / 1e6 + o * 0.50 / 1e6))
 
     return a
 
@@ -6218,6 +6223,15 @@ class Router(dict):
 
 SECOND, MINUTE, HOUR, DAY = 1, 1*60, 1*60*60, 1*60*60*24
 
+def certification(certificate='cert.pem', key='key.pem'):
+    """ Returns an SSL context for server certification.
+    """
+    # > openssl req -x509 -keyout key.pem -out cert.pem
+    import ssl
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(certificate, key)
+    return ctx
+
 # Recycle threads for handling concurrent requests:
 class ThreadPoolMixIn(SocketServer.ThreadingMixIn):
 
@@ -6263,7 +6277,7 @@ class App(ThreadPoolMixIn, WSGIServer):
         self.debug    = debug
         self.up       = False # running?
 
-    def run(self, host=None, port=None, debug=True):
+    def run(self, host=None, port=None, certification=None, debug=True):
         """ Starts the server.
         """
         if host is None:
@@ -6272,6 +6286,8 @@ class App(ThreadPoolMixIn, WSGIServer):
             port = self.server_address[1]
         if debug:
             autoreload(self)
+        if certification:
+            self.socket = certification.wrap_socket(self.socket, server_side=True) # SSL
 
         print('Starting server at %s:%s... press ctrl-c to stop.' % (host, port))
 
@@ -6579,7 +6595,40 @@ class FormData(dict): # RFC 7578
 def mimetype(path, default='application/octet-stream'):
     """ Returns the media type of the given filename.
     """
-    return mimetypes.guess_type(path)[0] or default
+    try:
+        s = open(path, 'rb').read(16) # sniff
+    except:
+        s = b''
+    if s.startswith(b'\xff\xd8\xff'): # magic bytes
+        return 'image/jpeg'
+    if s.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if s.startswith(b'RIFF') and s[8:12] == b'WEBP':
+        return 'image/webp'
+    if s.startswith(b'GIF87a'):
+        return 'image/gif'
+    if s.startswith(b'GIF89a'):
+        return 'image/gif'
+    if s.startswith(b'%PDF-'):
+        return 'application/pdf'
+    if s.startswith(b'SQLite format 3\x00'):
+        return 'application/vnd.sqlite3'
+    if s.startswith(b'PK\x03\x04') and path.endswith('.docx'):
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    if s.startswith(b'PK\x03\x04') and path.endswith('.xlsx'):
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    if s.startswith(b'PK\x03\x04') and path.endswith('.jar'):
+        return 'application/java-archive'
+    if s.startswith(b'PK\x03\x04'):
+        return 'application/zip'
+    if s.startswith(b'\x1f\x8b'):
+        return 'application/gzip'
+    if s.startswith(b'\x7fELF'):
+        return 'application/x-sharedlib'  # .so
+    if s.startswith(b'MZ'):
+        return 'application/x-msdownload' # .exe / .dll
+    else:
+        return mimetypes.guess_type(path)[0] or default
 
 def dataurl(path):
     """ Returns a data URL from the given file path.
