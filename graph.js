@@ -1,4 +1,4 @@
-// graph.js v3.5.
+// graph.js v3.5.1
 // (c) Textgain
 
 // --- RANDOM -------------------------------------------------------------------------------------
@@ -94,6 +94,7 @@ Graph.default = {
 	style       : {},
 	font        : '10px sans-serif',
 	fill        : '#fff', // node color
+	text        : '#000', // text color
 	stroke      : '#000', // edge color
 	strokewidth : 0.5,    // edge width
 	radius      : 4.0,    // node radius
@@ -224,7 +225,7 @@ Graph.prototype.render = function(ctx, x, y, options={}) {
 		if (o.labeled === true  || 
 			o.labeled !== false && 
 			o.labeled <= p.w) {
-			ctx.fillStyle = o.stroke;
+			ctx.fillStyle = o.text;
 			ctx.fillText(s, p.x + p.w * r + r + 2, 
 							p.y - p.w * r + r - 2);
 		}
@@ -316,10 +317,20 @@ Graph.prototype.centrality = function(iterations=100, d=0.85) {
 	return w;
 };
 
+Graph.prototype.central = function(top=0.1) {
+	/* Returns the top most central nodes.
+	 */
+	let n = Object.entries(this.nodes);
+		n = n.sort(([,p1], [,p2]) => p2.w - p1.w); // heaviest-first
+		n = n.slice(0, top * n.length);
+		n = n.map(([n,]) => n);
+	return n;
+};
+
 Graph.prototype.nn = function(n, depth=1) {
 	/* Returns a set of neighboring nodes.
 	 */
-	let a1 = new Set([''+n]);
+	let a1 = new Set(['' + n]);
 	let a2 = new Set();
 	for (let i=0; i < depth; i++) {
 		for (let n1 in this.edges) {
@@ -372,7 +383,7 @@ Graph.prototype.communities = function(iterations=10, state) {
 aggregate = function(graph, communities, iterations=2) {
 	/* Returns sorted sets of aggregated communities.
 	 */
-	let c = communities.map(n => [...n]); // Set → Array
+	let c = communities.map(n => Array.from(n));
 	let x = {};
 	let y = {};
 	let a = [];
@@ -388,7 +399,7 @@ aggregate = function(graph, communities, iterations=2) {
 	});
 	a = new Graph(y);
 	a = a.communities(iterations);
-	a = a.map(n => [...n]);
+	a = a.map(n => Array.from(n));
 	a = a.map(n => n.flatMap(n => c[n]));
 	a = a.map(n => new Set(n));
 	a = a.sort((a, b) => b.size - a.size);
